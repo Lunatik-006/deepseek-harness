@@ -2,13 +2,14 @@
 
 /**
  * The child receives the configured root and destination as literal argv. Existing roots retain
- * their files; only the process that creates a root writes its self-ignoring .gitignore.
+ * their files. New roots get a self-ignoring .gitignore; automatic Session bootstrap
+ * also creates a missing ignore file in its configured pool, never overwriting one.
  */
 export const PREPARE_DIRECTORY = `
 import fs from 'node:fs/promises';
 import path from 'node:path';
 async function main() {
-  const [root, destination] = process.argv.slice(1);
+  const [root, destination, ensureIgnore] = process.argv.slice(1);
   await fs.mkdir(path.dirname(root), { recursive: true });
   let created = false;
   try {
@@ -17,7 +18,13 @@ async function main() {
   } catch (error) {
     if (error.code !== 'EEXIST' || !(await fs.stat(root)).isDirectory()) throw error;
   }
-  if (created) await fs.writeFile(path.join(root, '.gitignore'), '*\\n', { flag: 'wx' });
+  if (created || ensureIgnore === 'ensure-ignore') {
+    try {
+      await fs.writeFile(path.join(root, '.gitignore'), '*\\n', { flag: 'wx' });
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+  }
   await fs.mkdir(path.dirname(destination), { recursive: true });
   await fs.mkdir(destination);
 }

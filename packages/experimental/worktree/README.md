@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Create an isolated checkout from a local commit and continue the same Session in it. Each operation creates a new named branch and leaves the source checkout intact. The existing sandbox governs all writes. Leaving the checkout retains its files and branch.
+Create an isolated checkout from a pinned commit and continue the same Session in it. Each operation creates a new named branch and leaves the source checkout intact. Model-requested creation keeps the Session sandbox; automatic new-Session setup can explicitly use trusted host access. Leaving the checkout retains its files and branch.
 
 ## Table of Contents
 
@@ -25,14 +25,33 @@ Create an isolated checkout from a local commit and continue the same Session in
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount the service alongside `workingDirectory`, `fs`, `subprocess`, `sandbox`, and `sandboxPolicy` providers. Add the tool package when models need the operation.
+Mount the service alongside `workingDirectory`, `fs`, `subprocess`, `sandbox`, `sandboxPolicy`, and `systemPrompt` providers. Add the tool package when models need the operation.
 
 ```yaml
 - name: '@deepseek-ai/dsh-experimental-worktree'
 - name: '@deepseek-ai/dsh-experimental-tool-worktree'
 ```
 
-`ctx.worktrees.create(agent, { name?, from? }, signal?, onPhase?)` creates a new branch and checkout, then enters the canonical checkout directory through `ctx.workingDirectory.set`. `from` resolves to a local commit before creation and defaults to `HEAD`; staged, unstaged, untracked, and ignored source files are not copied. `baseCommit` reports the resolved commit object name; repository-local replacement refs still apply to the checked-out content. Checkout disables configured Git clean, smudge, and process filters without changing repository configuration. An existing branch or checkout path is an error. The returned record contains `path`, `branch`, `baseCommit`, and `repositoryRoot`. An optional fourth argument, `onPhase`, receives `prepare` before validation, directory allocation, and branch creation, and `checkout` before the files are written and the checkout is entered; it must not throw.
+For every new top-level Git-backed Session to enter a fresh checkout before its first prompt, configure the service after the working-directory provider:
+
+```yaml
+- name: '@deepseek-ai/dsh-experimental-worktree'
+  config:
+    newSession: true
+    directory: .dsh/worktrees
+    freshBase:
+      remote: origin
+      branch: main
+    bootstrapSandbox: session
+```
+
+`freshBase` requires a successful fetch on every creation, serializes fetch and commit pinning for a shared Git directory, and rejects `from` overrides. A failed fetch stops preparation before a branch or checkout is allocated; cached refs and local `HEAD` are never substituted. `newSession` requires `freshBase`. Already-open idle top-level Sessions with no turn or message history are also enrolled when their directory still matches the original header; an entered worktree or a conversation with work is preserved. Empty Sessions remain immediately available; the first prompt waits for setup before instruction assembly continues, and no model request starts after a failed setup. Non-Git chats, resumes, seeded Sessions, and subagents keep their existing directory. The original Session header and sandbox root remain unchanged while the working-directory service records the new checkout.
+
+The configured pool is provider-owned for automatic Session setup: a missing pool `.gitignore` is created exclusively with `*` and a newline, so it ignores itself and every checkout. Existing ignore files are preserved. Bootstrap checks that the destination is ignored before Git creates the worktree, and stops if existing rules expose it in the source checkout. This keeps the source checkout status unchanged without editing its tracked ignore files, Git configuration, or exclude list.
+
+`bootstrapSandbox: host` explicitly authorizes the service's fixed automatic new-Session Git and directory setup outside the agent sandbox, including repository Git hooks, checkout filters, transport, and credential helpers. Choose it only for a trusted repository when its setup needs host access. This path uses normal Git checkout and preserves its hooks and filters. The default `session` keeps setup confined; model-requested `create_worktree` and `restore` always keep the calling Session's sandbox regardless of this setting. No arbitrary model shell command can select host bootstrap. Neither mode removes existing worktrees or discards their changes.
+
+`ctx.worktrees.create(agent, { name?, from? }, signal?, onPhase?)` creates a new branch and checkout, then enters the canonical checkout directory through `ctx.workingDirectory.set`. `from` resolves to a local commit before creation and defaults to `HEAD` when `freshBase` is absent; staged, unstaged, untracked, and ignored source files are not copied. `baseCommit` reports the resolved commit object name; repository-local replacement refs still apply to the checked-out content. Checkout disables configured Git clean, smudge, and process filters without changing repository configuration. An existing branch or checkout path is an error. The returned record contains `path`, `branch`, `baseCommit`, and `repositoryRoot`. An optional fourth argument, `onPhase`, receives `prepare` before validation, directory allocation, and branch creation, and `checkout` before the files are written and the checkout is entered; it must not throw.
 
 `ctx.worktrees.restore(agent, { path, branch, baseCommit, repositoryRoot }, signal?, onPhase?)` checks a removed worktree out again at its recorded directory. It validates the recorded repository root, full commit object name, branch, and canonical target inside the configured pool before mutation. It removes only the missing target's unlocked registration with `git worktree remove`; other worktrees and locked registrations remain unchanged. It then checks out the branch when it still exists, or creates the branch again at `baseCommit` when it does not, and reports which happened as `branchRecreated`. An existing directory is an error. The calling Session's working directory does not change, and changes that were never committed are not recovered. Checkout disables filters as creation does. `onPhase` receives `prepare` before validation, target-registration cleanup, and branch creation, and `checkout` before the files are written; it must not throw.
 
@@ -46,7 +65,7 @@ The default checkout directory is `<current checkout root>/.agents/worktrees/<na
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-Git and directory allocation run through the mounted subprocess and sandbox providers with the calling Session's existing file policy. Creation does not widen write access to the destination or shared Git administration directory. Directory creation claims the destination exclusively; cancellation and failed setup can leave retained artifacts, whose path appears in the error. Service disposal aborts pending operations and waits for their settlement.
+Git and directory allocation run through the mounted subprocess provider. Model-requested operations and default bootstrap use the calling Session's existing sandbox policy; explicit host bootstrap applies only to automatic first-prompt preparation. Directory creation claims the destination exclusively; cancellation and failed setup can leave retained artifacts, whose path appears in the error. Service disposal aborts pending operations and waits for their settlement.
 
 | Source | Responsibility |
 |---|---|
@@ -85,8 +104,8 @@ This package contributes no prompt text. Its consumers own the appended tool res
 <a id="known-limitations-and-deferred-work"></a>
 
 - **Retained artifacts** — leaving a worktree keeps its branch and files. Setup failures can also retain partial artifacts; checkout removal and branch deletion belong to the user or another consumer.
-- **Local revisions only** — creation does not fetch commits or missing partial-clone objects, initialize submodules, install dependencies, or copy uncommitted files. On Git that meets the execution requirements, missing local objects cause creation to fail.
-- **Filtered representations** — checkout skips configured filters to avoid executing repository-configured programs or triggering implicit downloads. Git LFS pointers and encrypted blobs stay in their stored representation; hydration or decryption is a separate user-controlled operation.
+- **Checkout setup** — without `freshBase`, creation uses local commits only. The service does not initialize submodules, install dependencies, or copy uncommitted or ignored files. Confined checkout also does not fetch missing partial-clone objects; on Git that meets the execution requirements, missing local objects cause creation to fail.
+- **Filtered representations** — confined checkout skips configured filters to avoid executing repository-configured programs or triggering implicit downloads. Git LFS pointers and encrypted blobs stay in their stored representation; hydration or decryption is a separate user-controlled operation. Explicit host bootstrap preserves ordinary checkout filters.
 - **Execution requirements** — the subprocess provider must offer Git and Node in the same execution world as the filesystem provider. Git must honor `GIT_NO_LAZY_FETCH`, which Git 2.45 and the 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, and 2.44.1 maintenance releases do; older releases ignore it and proceed instead of failing, so creation can fetch missing partial-clone objects from a promisor remote. The `git --no-lazy-fetch` option would reject these releases, but it exists only in Git 2.45 and later and also rejects the patched maintenance releases. The existing sandbox must permit all checkout and shared Git metadata writes.
 
 <a id="dev-note"></a>

@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-从本地提交创建隔离的检出目录，并在其中继续同一个 Session。每次操作创建新的具名分支，源检出目录保持不变。所有写入均受现有沙箱约束。离开检出目录会保留文件与分支。
+从固定提交创建隔离的检出目录，并在其中继续同一个 Session。每次操作创建新的具名分支，源检出目录保持不变。模型请求的创建沿用 Session 沙箱；自动新会话准备可显式使用可信宿主访问。离开检出目录会保留文件与分支。
 
 ## 目录
 
@@ -25,14 +25,33 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-将服务与 `workingDirectory`、`fs`、`subprocess`、`sandbox` 和 `sandboxPolicy` 提供方一起挂载。模型需要此操作时，再添加工具包。
+将服务与 `workingDirectory`、`fs`、`subprocess`、`sandbox`、`sandboxPolicy` 和 `systemPrompt` 提供方一起挂载。模型需要此操作时，再添加工具包。
 
 ```yaml
 - name: '@deepseek-ai/dsh-experimental-worktree'
 - name: '@deepseek-ai/dsh-experimental-tool-worktree'
 ```
 
-`ctx.worktrees.create(agent, { name?, from? }, signal?, onPhase?)` 创建新分支与检出目录，再通过 `ctx.workingDirectory.set` 进入规范化的检出目录。`from` 在创建前解析为本地提交，默认是 `HEAD`；暂存、未暂存、未跟踪以及被忽略的源文件均不复制。`baseCommit` 报告解析出的提交对象名称；仓库本地的替换引用仍作用于检出的内容。检出操作禁用已配置的 Git clean、smudge 和 process 过滤器，不修改仓库配置。分支或检出路径已存在时会报错。返回记录包含 `path`、`branch`、`baseCommit` 和 `repositoryRoot`。可选的第四个参数 `onPhase` 在校验、分配目录与创建分支之前收到 `prepare`，在写入文件并进入检出之前收到 `checkout`；它不得抛出异常。
+要让每个新的顶层 Git 会话在首次提示前进入全新检出目录，请在工作目录提供方之后配置此服务：
+
+```yaml
+- name: '@deepseek-ai/dsh-experimental-worktree'
+  config:
+    newSession: true
+    directory: .dsh/worktrees
+    freshBase:
+      remote: origin
+      branch: main
+    bootstrapSandbox: session
+```
+
+`freshBase` 要求每次创建都成功 fetch，按共享 Git 目录串行完成 fetch 与提交固定，并拒绝 `from` 覆盖。fetch 失败会在分配分支或检出目录前停止准备；不会回退到缓存引用或本地 `HEAD`。`newSession` 要求配置 `freshBase`。已打开但空闲、没有轮次或消息历史且目录仍与原始头信息一致的顶层会话也会被登记；已经进入的工作树或已有工作的对话保持不变。空会话仍立即可用；首次提示会等待准备完成再继续组装指令，准备失败后不会请求模型。非 Git 聊天、恢复的会话、带继承记录的会话及子智能体保持原目录。Session 原始头信息与沙箱根目录保持不变，工作目录服务记录新的检出目录。
+
+自动会话准备的配置池由提供方管理：缺少池 `.gitignore` 时，使用独占创建写入 `*` 加换行，使其自身和所有检出目录都被忽略。已有忽略文件保持不变。准备在 Git 创建工作树前检查目标已被忽略；若已有规则使目标暴露在源检出目录中，则停止。这样无需编辑源目录的受跟踪忽略文件、Git 配置或排除列表，就能保持源检出状态不变。
+
+`bootstrapSandbox: host` 显式授权服务在智能体沙箱之外执行固定的自动新会话 Git 和目录准备，包括仓库 Git hooks、检出过滤器、传输及凭据助手。仅当可信仓库的准备需要宿主权限时选择它；此路径使用正常 Git 检出并保留 hooks 与过滤器。默认 `session` 使准备继续受限；模型请求的 `create_worktree` 和 `restore` 始终沿用调用会话的沙箱，不受此设置影响。任意模型 shell 命令无法选择宿主准备。两种模式均不移除已有工作树或丢弃修改。
+
+`ctx.worktrees.create(agent, { name?, from? }, signal?, onPhase?)` 创建新分支与检出目录，再通过 `ctx.workingDirectory.set` 进入规范化的检出目录。未配置 `freshBase` 时，`from` 在创建前解析为本地提交，默认是 `HEAD`；暂存、未暂存、未跟踪以及被忽略的源文件均不复制。`baseCommit` 报告解析出的提交对象名称；仓库本地的替换引用仍作用于检出的内容。检出操作禁用已配置的 Git clean、smudge 和 process 过滤器，不修改仓库配置。分支或检出路径已存在时会报错。返回记录包含 `path`、`branch`、`baseCommit` 和 `repositoryRoot`。可选的第四个参数 `onPhase` 在校验、分配目录与创建分支之前收到 `prepare`，在写入文件并进入检出之前收到 `checkout`；它不得抛出异常。
 
 `ctx.worktrees.restore(agent, { path, branch, baseCommit, repositoryRoot }, signal?, onPhase?)` 在记录的目录重新检出被删除的 worktree。它在修改前校验记录中的仓库根目录、完整提交对象名、分支和配置池内的规范目标路径。它只通过 `git worktree remove` 移除缺失目标的未锁定登记；其他 worktree 与锁定登记保持不变。随后在分支仍存在时检出该分支，否则在 `baseCommit` 重新创建同名分支，并通过 `branchRecreated` 报告是哪种情况。目录已存在时会报错。调用方 Session 的工作目录不变，从未提交的修改无法恢复。检出与创建时一样禁用过滤器。`onPhase` 在检查目录、清理登记与创建分支之前收到 `prepare`，在写入文件之前收到 `checkout`；它不能抛出异常。
 
@@ -46,7 +65,7 @@ kind: "package-reference"
 <details>
 <summary>实现细节——点击展开</summary>
 
-Git 与目录分配通过挂载的子进程及沙箱提供方执行，沿用调用 Session 的文件策略。创建操作不会扩大目标目录或共享 Git 管理目录的写权限。目录创建独占申请目标路径；取消或初始化失败可能留下已有产物，错误会包含其路径。服务销毁会中止待完成操作，并等待它们结束。
+Git 与目录分配通过挂载的子进程提供方执行。模型请求的操作与默认准备使用调用 Session 的现有沙箱策略；显式宿主准备仅用于自动首次提示准备。目录创建独占申请目标路径；取消或初始化失败可能留下已有产物，错误会包含其路径。服务销毁会中止待完成操作，并等待它们结束。
 
 | 源码 | 职责 |
 |---|---|
@@ -85,8 +104,8 @@ Git 与目录分配通过挂载的子进程及沙箱提供方执行，沿用调�
 <a id="known-limitations-and-deferred-work"></a>
 
 - **保留产物**——离开工作树会保留其分支和文件。初始化失败也可能留下部分产物；移除检出目录与删除分支由用户或其他消费方负责。
-- **仅限本地提交**——创建操作不会获取远端提交或部分克隆中缺失的对象、初始化子模块、安装依赖或复制未提交文件。Git 满足执行要求时，本地对象缺失会导致创建失败。
-- **过滤器处理前的内容**——检出时跳过已配置的过滤器，以避免执行仓库配置的程序或隐式下载。Git LFS 指针与加密 blob 保持存储时的形式；拉取实体内容或解密由用户另行执行。
+- **检出准备**——未配置 `freshBase` 时，创建只使用本地提交。服务不初始化子模块、安装依赖或复制未提交及被忽略的文件。受限检出也不会获取部分克隆中缺失的对象；Git 满足执行要求时，本地对象缺失会导致创建失败。
+- **过滤器处理前的内容**——受限检出跳过已配置的过滤器，以避免执行仓库配置的程序或隐式下载。Git LFS 指针与加密 blob 保持存储时的形式；拉取实体内容或解密由用户另行执行。显式宿主准备保留正常检出过滤器。
 - **执行要求**——子进程提供方必须在与文件系统提供方相同的执行环境中提供 Git 与 Node。Git 必须识别 `GIT_NO_LAZY_FETCH`：Git 2.45 及 2.39.4、2.40.2、2.41.1、2.42.2、2.43.4、2.44.1 维护版本均支持；更早的版本会忽略该变量并继续执行而不报错，因此创建操作可能从 promisor 远程获取缺失的部分克隆对象。`git --no-lazy-fetch` 选项会拒绝这些版本，但它仅在 Git 2.45 及以后存在，也会拒绝上述已修补的维护版本。现有沙箱必须允许写入检出目录与共享 Git 元数据。
 
 <a id="dev-note"></a>
