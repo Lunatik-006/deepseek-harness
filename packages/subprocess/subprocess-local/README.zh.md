@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-在任何于宿主机上运行子进程的组合中挂载 `dsh-subprocess-local`。它解析本地可执行文件，为普通 Linux 与 Windows 命令以及受支持的 Linux 终端会话提供由 OS 所有的受管范围，并通过 `node-pty` 提供真实终端会话；不受支持的宿主使用明确披露的较弱 fallback。它没有任何配置，因此每项处置方式、限制、终端尺寸与宽限期都随 spawn 请求来自调用方能力 seam。输出收集在内存中保留一段有界尾部，并可选地用 spill 文件恢复完整流；子进程从清理后的环境起步；dispose（资源释放）会终止并等待每个选定范围或会话完全停稳。
+在任何于宿主机上运行子进程的组合中挂载 `dsh-subprocess-local`。它解析本地可执行文件，为普通 Linux 与 Windows 命令以及受支持的 Linux 终端会话提供由 OS 所有的受管范围，并通过 `node-pty` 提供真实终端会话；不受支持的宿主使用明确披露的较弱 fallback。处置方式、限制、终端尺寸与宽限期随 spawn 请求传入；可选的 `pathPrepend` 目录用于选择部署所有的子进程可执行文件。输出收集在内存中保留一段有界尾部，并可选地用 spill 文件恢复完整流；子进程从清理后的环境起步；dispose（资源释放）会终止并等待每个选定范围或会话完全停稳。
 
 ## 目录
 
@@ -29,7 +29,7 @@ kind: "package-reference"
 
 ### 挂载提供方
 
-在与消费方相同的组合中加载本提供方。它没有任何配置字段：每项选择都随 spawn 请求到达，因此随部署变化的决策留在调用方的配置里。 `terminalEnvironment()` 在 POSIX 读取非空的 `SHELL`，缺失时使用账户登录 shell；在 Windows 读取非空的 `ComSpec`。空值会被省略，由消费者选择平台回退。
+在与消费方相同的组合中加载本提供方。`pathPrepend` 默认为 `[]`；每个配置项必须是已存在的绝对目录，否则加载失败。在清理继承环境并应用逐请求覆盖后，这些目录会置于可执行文件解析、普通命令与终端的有效 PATH 之前。重复应用不会重复添加目录；Windows 不区分名称与路径的大小写。其他请求环境条目与删除标记保留原有含义。宿主 `process.env` 和其他应用不受影响。`terminalEnvironment()` 在 POSIX 读取非空的 `SHELL`，缺失时使用账户登录 shell；在 Windows 读取非空的 `ComSpec`。空值会被省略，由消费者选择平台回退。
 
 ```yaml
 - name: '@deepseek-ai/dsh-subprocess-local'
@@ -90,6 +90,7 @@ Linux 普通进程和终端进程即使在 bootstrap 消费启动请求前被取
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 服务接线：存活句柄集合、dispose、宿主退出最终清理、可执行文件查找 |
+| [`src/child-path.ts`](src/child-path.ts) | 仅对子进程生效并按平台去重的 PATH 前缀 |
 | [`src/spawn.ts`](src/spawn.ts) | 共享进程管道：直接结果、保尾收集、spill 文件与 fallback spawn |
 | [`src/managed-owner.ts`](src/managed-owner.ts) | 每个普通句柄使用的私有信号与等待 owner |
 | [`src/linux-scope.ts`](src/linux-scope.ts) | Linux user-systemd 能力检查、scope 启动、信号发送与完全停稳 |

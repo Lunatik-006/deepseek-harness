@@ -2,18 +2,18 @@
  * Local Service Provider for the subprocess capability seam. Each spawn owns a
  * platform-selected managed range with the spec's per-stream stdio dispositions.
  * Normal disposal terminates and joins live ranges; Node's synchronous exit
- * phase force-stops any ranges the service still owns. It has no config: every
- * disposition and limit arrives on the spec, so deployment-varying choices
- * stay with the caller's config (the bash executor's, the LSP host's, …).
+ * phase force-stops any ranges the service still owns. Dispositions and limits
+ * arrive on the spec; configured executable directories affect child PATH only.
  * @module @deepseek-ai/dsh-subprocess-local
  */
 
-import { constants } from 'node:fs'
+import { constants, statSync } from 'node:fs'
 import { access, stat } from 'node:fs/promises'
 import { userInfo } from 'node:os'
 import { delimiter, extname, isAbsolute, resolve } from 'node:path'
 import type { Duplex } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
 import type * as NodePty from 'node-pty'
 import type { IPtyForkOptions, IWindowsPtyForkOptions } from 'node-pty'
 import { createLazyRequire } from '@deepseek-ai/dsh-lazy-require'
@@ -51,8 +51,15 @@ import { createProcessInspector } from './process-inspector.ts'
 import type { ProcessInspector } from './process-inspector.ts'
 import { LocalTerminalHandle } from './terminal.ts'
 import { prepareShellActivity } from './shell-activity.ts'
+import { prependChildPath } from './child-path.ts'
 
 const requireNodePty = createLazyRequire<typeof NodePty>('node-pty', import.meta.url)
+
+/** Local child executable lookup; never changes the host process environment. */
+export interface Config {
+  /** Existing absolute directories prepended after caller PATH overrides; default is empty. */
+  pathPrepend?: string[]
+}
 
 /**
  * Local subprocess service: platform-selected managed ranges, Node-shaped stdio
@@ -62,6 +69,8 @@ const requireNodePty = createLazyRequire<typeof NodePty>('node-pty', import.meta
  * JavaScript-observable host exit also performs synchronous final termination.
  */
 export class LocalSubprocessRuntime extends SubprocessRuntime {
+  static Config: z<Config> = z.object({ pathPrepend: z.array(z.string()).default([]) })
+  private readonly pathPrepend: readonly string[]
   /** Live handles retained for normal disposal and synchronous host-exit finalization. */
   private live = new Set<LocalSubprocessHandle>()
   /** Live terminals retained through normal quiescence or host-exit finalization. */
@@ -87,8 +96,15 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
   /** Test hook for platform process inspection; production resolves lazily on terminal spawn. */
   terminalInspector: ProcessInspector | undefined
 
-  constructor(ctx: Context) {
+  constructor(ctx: Context, config: Config = {}) {
     super(ctx)
+    this.pathPrepend = [...config.pathPrepend ?? []]
+    for (const directory of this.pathPrepend) {
+      if (directory.includes('\0') || !isAbsolute(directory)) {
+        throw new Error('subprocess-local: pathPrepend entries must be absolute directory paths without null bytes')
+      }
+      if (!statSync(directory).isDirectory()) throw new Error(`subprocess-local: pathPrepend entry is not a directory: ${directory}`)
+    }
     ctx.effect(() => {
       const onHostExit = (): void => { this.terminateForHostExit() }
       process.prependListener('exit', onHostExit)
@@ -159,7 +175,7 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
   ): Promise<string> {
     if (command.length === 0) throw new Error('subprocess-local: executable must be non-empty')
     signal?.throwIfAborted()
-    const environment = childEnv(env)
+    const environment = prependChildPath(childEnv(env), this.pathPrepend)
     const absolute = isAbsolute(command)
     if (!absolute && (command.includes('/') || (process.platform === 'win32' && command.includes('\\')))) {
       throw new Error(
@@ -196,6 +212,7 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
 
   spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
     validateSubprocessSpec(spec)
+    if (this.pathPrepend.length > 0) spec = { ...spec, env: prependChildPath(childEnv(spec.env), this.pathPrepend) }
     const env = targetEnvironment(spec)
     const containmentMode = this.selectContainmentMode('ordinary')
     let handle: LocalSubprocessHandle
@@ -295,7 +312,9 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
     spec.signal?.throwIfAborted()
     const inspector = this.terminalInspector ?? createProcessInspector()
     const containmentMode = this.selectContainmentMode('terminal')
-    const env = targetEnvironment(spec)
+    const env = targetEnvironment(this.pathPrepend.length === 0 ? spec : {
+      ...spec, env: prependChildPath(childEnv(spec.env), this.pathPrepend),
+    })
     const platform = this.internals.platform ?? process.platform
     const activity = prepareShellActivity(spec, env, platform)
     const launch = activity === undefined ? spec : { ...spec, argv: activity.argv, env: activity.env }

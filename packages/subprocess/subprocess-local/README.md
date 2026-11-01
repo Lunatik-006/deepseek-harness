@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Mount `dsh-subprocess-local` in any composition that runs child processes on the host. It resolves local executables, gives ordinary Linux and Windows commands plus supported Linux terminal sessions an OS-owned managed range, and provides real terminal sessions through `node-pty`; unsupported hosts use an explicit weaker fallback. It has no configuration, so every disposition, limit, terminal size, and grace arrives on the spawn request from the calling capability seam. Output collection keeps a bounded in-memory tail with optional spill files for full-stream recovery, children start from a scrubbed environment, and disposal terminates and joins every selected range or session.
+Mount `dsh-subprocess-local` in any composition that runs child processes on the host. It resolves local executables, gives ordinary Linux and Windows commands plus supported Linux terminal sessions an OS-owned managed range, and provides real terminal sessions through `node-pty`; unsupported hosts use an explicit weaker fallback. Dispositions, limits, terminal sizes, and grace periods arrive on the spawn request; optional `pathPrepend` directories select deployment-owned child executables. Output collection keeps a bounded in-memory tail with optional spill files for full-stream recovery, children start from a scrubbed environment, and disposal terminates and joins every selected range or session.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ Mount the provider beside its consumers and start processes exactly as the subpr
 
 ### Mounting the provider
 
-Load the provider in the same composition as its consumers. It has no config fields: every choice arrives on the spawn request, so deployment-varying decisions stay with the caller's configuration. `terminalEnvironment()` reads a nonempty `SHELL` on POSIX, falling back to the account login shell, or a nonempty `ComSpec` on Windows. Empty values are omitted so the consumer can choose its platform fallback.
+Load the provider in the same composition as its consumers. `pathPrepend` defaults to `[]`; each configured entry must be an existing absolute directory or loading fails. After inherited environment scrubbing and per-request overrides, these directories precede the effective PATH for executable resolution, ordinary commands, and terminals. Reapplying the prefix does not duplicate its directories; Windows compares names and paths case-insensitively. Other request environment entries and tombstones retain their meaning. The host `process.env` and other applications are unchanged. `terminalEnvironment()` reads a nonempty `SHELL` on POSIX, falling back to the account login shell, or a nonempty `ComSpec` on Windows. Empty values are omitted so the consumer can choose its platform fallback.
 
 ```yaml
 - name: '@deepseek-ai/dsh-subprocess-local'
@@ -90,6 +90,7 @@ Each spawn selects one owner for both signalling and quiescence. Supported Linux
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Service wiring: live-handle sets, disposal, host-exit finalization, executable lookup |
+| [`src/child-path.ts`](src/child-path.ts) | Child-only PATH prefixes with platform-aware deduplication |
 | [`src/spawn.ts`](src/spawn.ts) | Shared process plumbing: direct outcomes, tail-keep collection, spill files, and fallback spawning |
 | [`src/managed-owner.ts`](src/managed-owner.ts) | Private signal-and-wait owner used by each ordinary handle |
 | [`src/linux-scope.ts`](src/linux-scope.ts) | Linux user-systemd capability checks, scope launch, signalling, and quiescence |
