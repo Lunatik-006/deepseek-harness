@@ -7,6 +7,7 @@ import type {} from '@deepseek-ai/dsh-fs'
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type {} from '@deepseek-ai/dsh-working-directory'
+import type {} from '@deepseek-ai/dsh-system-prompt'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { PREPARE_DIRECTORY } from './directory.ts'
 import { generatedWorktreeName } from './name.ts'
@@ -19,6 +20,21 @@ export { generatedWorktreeName } from './name.ts'
 
 /** Worktree location, generated names, executables, and subprocess resource limits. */
 export interface Config {
+  /** Prepare a fresh worktree before the first prompt of each new top-level Git-backed Session. Requires freshBase. */
+  newSession?: boolean
+  /**
+   * Run only automatic new-Session Git/directory setup as trusted host commands.
+   * Explicit host opt-in permits repository Git hooks and credential helpers;
+   * model-requested creation and subsequent agent tools retain the Session sandbox.
+   */
+  bootstrapSandbox?: 'session' | 'host'
+  /** Fetch this configured remote branch successfully before every creation; never use a cached base. */
+  freshBase?: {
+    /** Configured Git remote name, such as origin. */
+    remote: string
+    /** Branch on that remote, such as main. */
+    branch: string
+  }
   /** Relative checkout pool inside the source repository. */
   directory?: string
   /** Prefix for automatically generated branch and checkout names. */
@@ -35,7 +51,7 @@ export interface Config {
   maxOutputBytes?: number
 }
 
-type ResolvedConfig = Required<Config> & ProcessConfig
+type ResolvedConfig = Required<Omit<Config, 'freshBase'>> & Pick<Config, 'freshBase'> & ProcessConfig
 
 interface WorktreeSpec {
   branch: string
@@ -59,9 +75,12 @@ function relativePath(value: string): boolean {
 
 /** Creates retained Git worktrees under the mounted filesystem and sandbox providers. */
 export class WorktreeService extends Service {
-  static inject = ['workingDirectory', 'fs', 'subprocess', 'sandbox', 'sandboxPolicy']
+  static inject = ['workingDirectory', 'fs', 'subprocess', 'sandbox', 'sandboxPolicy', 'systemPrompt']
 
   static Config: z<Config> = z.object({
+    newSession: z.boolean().default(false),
+    bootstrapSandbox: z.union(['session', 'host'] as const).default('session'),
+    freshBase: z.object({ remote: z.string().min(1), branch: z.string().min(1) }),
     directory: z.string().default('.agents/worktrees'),
     namePrefix: z.string().default('dsh-'),
     gitCommand: z.string().default('git'),
@@ -74,10 +93,21 @@ export class WorktreeService extends Service {
   private readonly config: ResolvedConfig
   private readonly lifetime = new AbortController()
   private readonly pending = new Set<Promise<unknown>>()
+  /** Serialize fetch and base pinning for Sessions sharing one Git administration directory. */
+  private readonly freshBases = new Map<string, Promise<void>>()
+  private readonly newSessions = new WeakSet<Agent>()
+  private readonly startingSessions = new WeakMap<Agent, Promise<void>>()
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'worktrees')
     this.config = config as ResolvedConfig
+    if (this.config.newSession && this.config.freshBase === undefined) {
+      throw new Error('worktree: newSession requires freshBase')
+    }
+    if (this.config.freshBase !== undefined && (this.config.freshBase.remote.startsWith('-')
+      || this.config.freshBase.branch.startsWith('-'))) {
+      throw new Error('worktree: freshBase remote and branch must not start with a dash')
+    }
     if (!relativePath(this.config.directory)) throw new Error('worktree: directory must be a relative directory without dot segments')
     if (!relativePath(`${this.config.namePrefix}name`) || this.config.namePrefix.startsWith('-')) {
       throw new Error('worktree: namePrefix must produce a relative branch name')
@@ -95,17 +125,76 @@ export class WorktreeService extends Service {
       this.lifetime.abort(new Error('worktree service disposed'))
       await Promise.allSettled(this.pending)
     })
+    if (this.config.newSession) {
+      ctx.on('agent/created', ({ agent, source }) => {
+        const header = agent.session.header
+        if (source === 'startup' && !header.isSeeded && header.origin !== 'subagent'
+          && (header.delegationDepth ?? 0) === 0) this.newSessions.add(agent)
+        return undefined
+      })
+      // Prepare before instruction providers run; empty chat panes need no network work.
+      // The working-directory provider refreshes its accepted context after next().
+      ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
+        const agent = context.agent
+        if (agent !== undefined && this.newSessions.has(agent)) {
+          let starting = this.startingSessions.get(agent)
+          if (starting === undefined) {
+            starting = this.prepareNewSession(agent, context.signal)
+            this.startingSessions.set(agent, starting)
+          }
+          try {
+            await starting
+            this.newSessions.delete(agent)
+          } finally {
+            if (this.startingSessions.get(agent) === starting) this.startingSessions.delete(agent)
+          }
+        }
+        return next()
+      }, { prepend: true })
+    }
+  }
+
+  /** Gate the first prompt while retaining the original project header and sandbox policy. */
+  private async prepareNewSession(agent: Agent, signal?: AbortSignal): Promise<void> {
+    const control = signal === undefined ? this.lifetime.signal : AbortSignal.any([signal, this.lifetime.signal])
+    const operation = (async () => {
+      const cwd = await this.ctx.workingDirectory.ensure(agent, control)
+      if (!await this.hasGitDirectory(cwd, control)) return
+      await this.createCheckout(agent, this.resolve(agent, {}), control, undefined, true)
+    })()
+    this.pending.add(operation)
+    try {
+      await operation
+    } finally {
+      this.pending.delete(operation)
+    }
+  }
+
+  /** Skip non-Git chats without converting executable, permission, or repository failures into success. */
+  private async hasGitDirectory(cwd: string, signal: AbortSignal): Promise<boolean> {
+    let directory = await this.ctx.fs.resolve('.', { cwd, signal })
+    while (true) {
+      signal.throwIfAborted()
+      const path = this.ctx.fs.processPath(directory)
+      const marker = await this.ctx.fs.resolve('.git', { cwd: path, signal })
+      if (await this.ctx.fs.lstat(this.ctx.fs.processPath(marker), undefined, signal) !== undefined) return true
+      const parent = await this.ctx.fs.resolve('..', { cwd: path, signal })
+      if (parent.targetKey === directory.targetKey) return false
+      directory = parent
+    }
   }
 
   /**
-   * Create a fresh branch and checkout at a pinned local revision, then enter it.
+   * Create a fresh branch and checkout at a pinned revision, then enter it.
+   * freshBase requires a successful fetch and pins that remote branch before allocation;
+   * explicit from overrides are rejected while that operator policy is configured.
    * Existing branches or checkout paths fail. Uncommitted files stay in the source checkout.
    * Checkout disables configured clean, smudge, and process filters without changing Git config.
    * Repository-local replacement refs still apply; baseCommit reports the resolved object name.
    * The new checkout becomes current only after Git setup succeeds. Failures may retain newly
    * allocated Git/filesystem artifacts; no branch or checkout is removed automatically.
    * @param agent - caller whose current directory selects the source repository and file policy.
-   * @param request - optional new name and local revision; defaults are generated name and HEAD.
+   * @param request - optional new name and local revision; the base is freshBase when configured, otherwise HEAD.
    * @param signal - cancellation of lookup, creation, and working-directory publication.
    * @param onPhase - receives each stage before it begins; it must not throw.
    * @returns canonical checkout path, branch name, pinned commit, and source repository root.
@@ -162,6 +251,9 @@ export class WorktreeService extends Service {
     const branch = request.name ?? generatedWorktreeName(this.config.namePrefix, agent.session.id)
     if (!relativePath(branch) || branch.startsWith('-')) throw new Error('worktree name must be a relative Git branch name')
     const revision = request.from ?? 'HEAD'
+    if (this.config.freshBase !== undefined && request.from !== undefined) {
+      throw new Error('worktree: from cannot override the configured freshBase')
+    }
     if (revision.length === 0) throw new Error('worktree from must name a local commit, branch, or tag')
     return { branch, revision }
   }
@@ -171,17 +263,21 @@ export class WorktreeService extends Service {
     { branch, revision }: WorktreeSpec,
     signal: AbortSignal,
     onPhase: ((phase: CreateWorktreePhase) => void) | undefined,
+    bootstrap = false,
   ): Promise<CreatedWorktree> {
     onPhase?.('prepare')
     const cwd = await this.ctx.workingDirectory.ensure(agent, signal)
-    const policy = this.ctx.sandboxPolicy.resolve({ session: agent.session })
-    const run = this.gitRunner(policy, signal)
+    const sessionPolicy = this.ctx.sandboxPolicy.resolve({ session: agent.session })
+    const trustedBootstrap = bootstrap && this.config.bootstrapSandbox === 'host'
+    const policy = trustedBootstrap ? { ...sessionPolicy, mode: 'danger-full-access' as const } : sessionPolicy
+    const run = this.gitRunner(policy, signal, trustedBootstrap)
     await run(cwd, ['check-ref-format', `refs/heads/${branch}`])
     const rootOutput = await run(cwd, ['rev-parse', '--show-toplevel'])
     const rootTarget = await this.ctx.fs.resolve(rootOutput.stdout.replace(/\r?\n$/, ''), { cwd, signal })
     const repositoryRoot = this.ctx.fs.processPath(rootTarget)
-    const base = await run(repositoryRoot, ['rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`])
-    const baseCommit = base.stdout.trim()
+    const baseCommit = this.config.freshBase === undefined
+      ? (await run(repositoryRoot, ['rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`])).stdout.trim()
+      : await this.fetchFreshBase(repositoryRoot, run, signal)
     const existing = await run(repositoryRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], [0, 1])
     if (existing.exitCode === 0) throw new Error(`worktree branch already exists: ${branch}`)
     const pool = await this.ctx.fs.resolve(this.config.directory, { cwd: repositoryRoot, signal })
@@ -191,15 +287,42 @@ export class WorktreeService extends Service {
     if (await this.ctx.fs.lstat(path, undefined, signal) !== undefined) throw new Error(`worktree path already exists: ${path}`)
     try {
       await this.prepareDirectory(policy, repositoryRoot, poolPath, path, signal)
-      await run(repositoryRoot, ['--work-tree', repositoryRoot, 'worktree', 'add', '--no-checkout', '-b', branch, '--', path, baseCommit])
-      const overrides = await filterOverrides(run, path)
-      onPhase?.('checkout')
-      await run(path, ['--work-tree', path, 'reset', '--hard', '--no-recurse-submodules', baseCommit], undefined, overrides)
+      if (trustedBootstrap) {
+        // Native checkout runs the trusted repository's filters and post-checkout hook.
+        onPhase?.('checkout')
+        await run(repositoryRoot, ['--work-tree', repositoryRoot, 'worktree', 'add', '--no-track', '-b', branch, '--', path, baseCommit])
+      } else {
+        await run(repositoryRoot, ['--work-tree', repositoryRoot, 'worktree', 'add', '--no-checkout', '-b', branch, '--', path, baseCommit])
+        const overrides = await filterOverrides(run, path)
+        onPhase?.('checkout')
+        await run(path, ['--work-tree', path, 'reset', '--hard', '--no-recurse-submodules', baseCommit], undefined, overrides)
+      }
       const canonicalPath = await this.ctx.workingDirectory.set(agent, path, signal)
       return { path: canonicalPath, branch, baseCommit, repositoryRoot }
     } catch (error) {
       throw new Error(`Could not finish worktree ${branch} at ${path}. Any created checkout and branch are retained. ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
+  }
+
+  /** Fetch and pin one remote branch without accepting a stale ref after a failed fetch. */
+  private async fetchFreshBase(repositoryRoot: string, run: GitRun, signal: AbortSignal): Promise<string> {
+    const fresh = this.config.freshBase
+    if (fresh === undefined) throw new Error('worktree: freshBase is not configured')
+    const shared = await run(repositoryRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
+    const key = shared.stdout.trim()
+    const previous = this.freshBases.get(key) ?? Promise.resolve()
+    const operation = previous.then(async () => {
+      signal.throwIfAborted()
+      await run(repositoryRoot, ['check-ref-format', `refs/heads/${fresh.branch}`])
+      // Only a named, configured remote is accepted, rather than a caller-supplied URL or path.
+      await run(repositoryRoot, ['remote', 'get-url', fresh.remote])
+      const ref = `refs/remotes/${fresh.remote}/${fresh.branch}`
+      await run(repositoryRoot, ['fetch', '--no-tags', '--no-write-fetch-head', fresh.remote, `refs/heads/${fresh.branch}:${ref}`])
+      const base = await run(repositoryRoot, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`])
+      return base.stdout.trim()
+    })
+    this.freshBases.set(key, operation.then(() => {}, () => {}))
+    return operation
   }
 
   private async restoreCheckout(
@@ -254,11 +377,11 @@ export class WorktreeService extends Service {
     }
   }
 
-  /** Confine Git commands to the caller's sandbox policy, with hooks and the filesystem monitor disabled. */
-  private gitRunner(policy: SandboxExecutionPolicy, signal: AbortSignal): GitRun {
+  /** Use fixed setup argv; only operator-authorized new-Session bootstrap preserves repository hooks. */
+  private gitRunner(policy: SandboxExecutionPolicy, signal: AbortSignal, trustedBootstrap = false): GitRun {
     return (directory, args, allowedExitCodes, env) => runCommand(
       this.ctx, this.config, policy, directory,
-      [this.config.gitCommand, '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args],
+      [this.config.gitCommand, ...trustedBootstrap ? [] : ['-c', 'core.hooksPath=/dev/null'], '-c', 'core.fsmonitor=false', ...args],
       signal, allowedExitCodes, env,
     )
   }
