@@ -274,6 +274,10 @@ export class LocalSandboxProvider extends SandboxProvider {
    */
   private readonly workspaceGrants = new Map<string, AclWriteGrant>()
   private readonly tempCapabilities = new Map<string, AclTempCapability>()
+  /** Serialize first-use grants per workspace while allowing unrelated roots to prepare concurrently. */
+  private readonly aclGrantOperations = new Map<string, Promise<void>>()
+  /** Prevent pending preparation from publishing capabilities after provider teardown. */
+  private readonly aclGrantAbort = new AbortController()
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
@@ -305,8 +309,10 @@ export class LocalSandboxProvider extends SandboxProvider {
     // shutdown leaves no temp ACEs behind (workspace ACEs stand by design —
     // the reuse cache; an unclean shutdown leaves them for the next
     // provision's exact-ACE skip).
-    ctx.effect(() => () => {
-      this.revokeAclGrants()
+    ctx.effect(() => async () => {
+      this.aclGrantAbort.abort(new Error('sandbox-local provider disposed'))
+      await Promise.all(this.aclGrantOperations.values())
+      await this.revokeAclGrants()
     })
   }
 
@@ -317,13 +323,14 @@ export class LocalSandboxProvider extends SandboxProvider {
    *
    * @param argv - the exact argv the caller is about to spawn.
    * @param policy - the file-effect policy this execution runs under.
-   * @param signal - cancellation before policy resolution or grant creation.
+   * @param signal - cancellation before policy resolution and throughout ACL preparation.
    * @returns the wrapped argv plus the selected backend's enforcement completeness, denial
    *   signatures, and structured runner-failure rules; throws the fail-closed
    *   `SANDBOX_UNAVAILABLE` error when the platform has no usable runner.
    */
   async confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv> {
-    signal?.throwIfAborted()
+    signal = signal === undefined ? this.aclGrantAbort.signal : AbortSignal.any([signal, this.aclGrantAbort.signal])
+    signal.throwIfAborted()
     policy = { ...policy, workspaceRoot: canonicalPath(policy.workspaceRoot) }
     if (this.runnerCommand !== undefined) {
       return Promise.resolve<ConfinedArgv>({
@@ -334,7 +341,8 @@ export class LocalSandboxProvider extends SandboxProvider {
       })
     }
     const selected = this.selectRunner(policy.mode)
-    const runnerArgv = this.runnerArgv(selected.runner, policy)
+    const runnerArgv = await this.runnerArgv(selected.runner, policy, signal)
+    signal.throwIfAborted()
     return Promise.resolve<ConfinedArgv>({
       argv: [...runnerArgv, '--', ...argv],
       enforcement: selected.enforcement,
@@ -344,12 +352,12 @@ export class LocalSandboxProvider extends SandboxProvider {
   }
 
   /** The selected rung's runner invocation (program + profile arguments) for one policy. */
-  private runnerArgv(runner: SelectedRunner['runner'], policy: SandboxPolicy): string[] {
+  private async runnerArgv(runner: SelectedRunner['runner'], policy: SandboxPolicy, signal: AbortSignal): Promise<string[]> {
     switch (runner) {
       case 'bwrap': return ['bwrap', ...bwrapProfileArgs(policy)]
       case 'landlock': return [this.landlockLauncher(), ...landlockProfileArgs(policy)]
       case 'seatbelt': return [this.seatbeltExec(), ...seatbeltProfileArgs(policy)]
-      case 'windows-acl': return this.windowsAclRunnerArgv(policy)
+      case 'windows-acl': return this.windowsAclRunnerArgv(policy, signal)
       default: return assertNever(runner)
     }
   }
@@ -364,9 +372,10 @@ export class LocalSandboxProvider extends SandboxProvider {
    * calls pass the ambient temp ROOT and no SID flags: the runner creates and
    * removes a random private child directory for that one invocation.
    * @param policy - the resolved per-call policy.
+   * @param signal - cancellation of ACL preparation before any command can spawn.
    * @returns the runner invocation.
    */
-  private windowsAclRunnerArgv(policy: SandboxPolicy): string[] {
+  private async windowsAclRunnerArgv(policy: SandboxPolicy, signal: AbortSignal): Promise<string[]> {
     if (policy.mode === 'workspace-write' && (policy.additionalWritableRoots?.length ?? 0) > 0) {
       throw new SandboxUnsupportedPolicyError('Windows ACL confinement does not support additional writable directories; remove the extra grants or use a supported host')
     }
@@ -379,7 +388,8 @@ export class LocalSandboxProvider extends SandboxProvider {
         '--mode', policy.mode,
       ]
     }
-    const temp = this.materializeAclGrant(sessionId, policy.workspaceRoot)
+    const temp = await this.materializeAclGrant(sessionId, policy.workspaceRoot, signal)
+    signal.throwIfAborted()
     return [
       ...this.windowsAclRunnerInvocation(),
       '--workspace', policy.workspaceRoot,
@@ -401,21 +411,33 @@ export class LocalSandboxProvider extends SandboxProvider {
    * removed before the error propagates.
    * @param sessionId - the policy's calling-session identity.
    * @param workspaceRoot - the resolved policy root.
+   * @param signal - cancellation while waiting for or applying write grants.
    * @returns the pair's private temp directory and write capability.
    */
-  private materializeAclGrant(sessionId: SessionId, workspaceRoot: string): AclTempCapability {
+  private materializeAclGrant(sessionId: SessionId, workspaceRoot: string, signal: AbortSignal): Promise<AclTempCapability> {
+    const previous = this.aclGrantOperations.get(workspaceRoot) ?? Promise.resolve()
+    const operation = previous.then(() => this.createAclGrant(sessionId, workspaceRoot, signal))
+    // Failed or cancelled preparation must not poison later calls for this root.
+    this.aclGrantOperations.set(workspaceRoot, operation.then(() => {}, () => {}))
+    return operation
+  }
+
+  /** Prepare one pair after every earlier operation for this workspace has settled. */
+  private async createAclGrant(sessionId: SessionId, workspaceRoot: string, signal: AbortSignal): Promise<AclTempCapability> {
+    signal.throwIfAborted()
     assertTempRootOutsideWorkspace(workspaceRoot, tmpdir())
     const writeSid = workspaceWriteSid(workspaceRoot)
     if (!this.workspaceGrants.has(workspaceRoot)) {
       const grant = AclWriteGrant.create(writeSid)
       try {
-        grant.add(workspaceRoot, true)
+        await grant.addAsync(workspaceRoot, true, signal)
+        signal.throwIfAborted()
       } catch (error) {
         // Free the SID; a standing ACE (if the apply succeeded before a
         // post-apply throw) is the intended end state, not an error
         // artifact — nothing to revoke.
         try {
-          grant.dispose()
+          await grant.disposeAsync()
         } catch (cleanupError) {
           throw new AggregateError([error, cleanupError], 'sandbox-local windows-acl workspace grant failed and its cleanup also failed')
         }
@@ -431,12 +453,13 @@ export class LocalSandboxProvider extends SandboxProvider {
     let grant: AclWriteGrant | undefined
     try {
       grant = AclWriteGrant.create(tempSid)
-      grant.add(tempDir)
+      await grant.addAsync(tempDir, false, signal)
+      signal.throwIfAborted()
     } catch (error) {
       const cleanupFailures: unknown[] = []
       if (grant !== undefined) {
         try {
-          grant.dispose()
+          await grant.disposeAsync()
         } catch (cleanupError) {
           cleanupFailures.push(cleanupError)
         }
@@ -465,12 +488,12 @@ export class LocalSandboxProvider extends SandboxProvider {
    * of it, but a new provider never reuses the residue's random path or SID;
    * OS temp hygiene (or manual removal) eventually reclaims it.
    */
-  private revokeAclGrants(): void {
+  private async revokeAclGrants(): Promise<void> {
     if (this.workspaceGrants.size === 0 && this.tempCapabilities.size === 0) return
     const failures: unknown[] = []
     for (const grant of [...this.workspaceGrants.values(), ...[...this.tempCapabilities.values()].map(capability => capability.grant)]) {
       try {
-        grant.dispose()
+        await grant.disposeAsync()
       } catch (error) {
         failures.push(error)
       }
