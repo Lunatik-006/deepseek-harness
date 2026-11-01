@@ -286,7 +286,10 @@ export class WorktreeService extends Service {
     const path = this.ctx.fs.processPath(destination)
     if (await this.ctx.fs.lstat(path, undefined, signal) !== undefined) throw new Error(`worktree path already exists: ${path}`)
     try {
-      await this.prepareDirectory(policy, repositoryRoot, poolPath, path, signal)
+      await this.prepareDirectory(policy, repositoryRoot, poolPath, path, signal, bootstrap)
+      if (bootstrap && (await run(repositoryRoot, ['check-ignore', '--quiet', '--', path], [0, 1])).exitCode !== 0) {
+        throw new Error('Configured worktree pool does not ignore the checkout; preserve its existing .gitignore and configure an ignored pool')
+      }
       if (trustedBootstrap) {
         // Native checkout runs the trusted repository's filters and post-checkout hook.
         onPhase?.('checkout')
@@ -393,9 +396,10 @@ export class WorktreeService extends Service {
     poolPath: string,
     path: string,
     signal: AbortSignal,
+    ensureIgnore = false,
   ): Promise<void> {
     await runCommand(this.ctx, this.config, policy, repositoryRoot,
-      [this.config.nodeCommand, '--input-type=module', '-e', PREPARE_DIRECTORY, poolPath, path], signal)
+      [this.config.nodeCommand, '--input-type=module', '-e', PREPARE_DIRECTORY, poolPath, path, ...ensureIgnore ? ['ensure-ignore'] : []], signal)
   }
 }
 

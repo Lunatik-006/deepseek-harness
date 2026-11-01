@@ -38,6 +38,7 @@ For every new top-level Git-backed Session to enter a fresh checkout before its 
 - name: '@deepseek-ai/dsh-experimental-worktree'
   config:
     newSession: true
+    directory: .dsh/worktrees
     freshBase:
       remote: origin
       branch: main
@@ -45,6 +46,8 @@ For every new top-level Git-backed Session to enter a fresh checkout before its 
 ```
 
 `freshBase` requires a successful fetch on every creation, serializes fetch and commit pinning for a shared Git directory, and rejects `from` overrides. A failed fetch stops preparation before a branch or checkout is allocated; cached refs and local `HEAD` are never substituted. `newSession` requires `freshBase`. Empty Sessions remain immediately available; the first prompt waits for setup before instruction assembly continues, and no model request starts after a failed setup. Non-Git chats, resumes, seeded Sessions, and subagents keep their existing directory. The original Session header and sandbox root remain unchanged while the working-directory service records the new checkout.
+
+The configured pool is provider-owned for automatic Session setup: a missing pool `.gitignore` is created exclusively with `*` and a newline, so it ignores itself and every checkout. Existing ignore files are preserved. Bootstrap checks that the destination is ignored before Git creates the worktree, and stops if existing rules expose it in the source checkout. This keeps the source checkout status unchanged without editing its tracked ignore files, Git configuration, or exclude list.
 
 `bootstrapSandbox: host` explicitly authorizes the service's fixed automatic new-Session Git and directory setup outside the agent sandbox, including repository Git hooks, checkout filters, transport, and credential helpers. Choose it only for a trusted repository when its setup needs host access. This path uses normal Git checkout and preserves its hooks and filters. The default `session` keeps setup confined; model-requested `create_worktree` and `restore` always keep the calling Session's sandbox regardless of this setting. No arbitrary model shell command can select host bootstrap. Neither mode removes existing worktrees or discards their changes.
 

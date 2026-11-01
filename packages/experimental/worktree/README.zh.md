@@ -38,6 +38,7 @@ kind: "package-reference"
 - name: '@deepseek-ai/dsh-experimental-worktree'
   config:
     newSession: true
+    directory: .dsh/worktrees
     freshBase:
       remote: origin
       branch: main
@@ -45,6 +46,8 @@ kind: "package-reference"
 ```
 
 `freshBase` 要求每次创建都成功 fetch，按共享 Git 目录串行完成 fetch 与提交固定，并拒绝 `from` 覆盖。fetch 失败会在分配分支或检出目录前停止准备；不会回退到缓存引用或本地 `HEAD`。`newSession` 要求配置 `freshBase`。空会话仍立即可用；首次提示会等待准备完成再继续组装指令，准备失败后不会请求模型。非 Git 聊天、恢复的会话、带继承记录的会话及子智能体保持原目录。Session 原始头信息与沙箱根目录保持不变，工作目录服务记录新的检出目录。
+
+自动会话准备的配置池由提供方管理：缺少池 `.gitignore` 时，使用独占创建写入 `*` 加换行，使其自身和所有检出目录都被忽略。已有忽略文件保持不变。准备在 Git 创建工作树前检查目标已被忽略；若已有规则使目标暴露在源检出目录中，则停止。这样无需编辑源目录的受跟踪忽略文件、Git 配置或排除列表，就能保持源检出状态不变。
 
 `bootstrapSandbox: host` 显式授权服务在智能体沙箱之外执行固定的自动新会话 Git 和目录准备，包括仓库 Git hooks、检出过滤器、传输及凭据助手。仅当可信仓库的准备需要宿主权限时选择它；此路径使用正常 Git 检出并保留 hooks 与过滤器。默认 `session` 使准备继续受限；模型请求的 `create_worktree` 和 `restore` 始终沿用调用会话的沙箱，不受此设置影响。任意模型 shell 命令无法选择宿主准备。两种模式均不移除已有工作树或丢弃修改。
 
