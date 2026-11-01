@@ -126,10 +126,16 @@ export class WorktreeService extends Service {
       await Promise.allSettled(this.pending)
     })
     if (this.config.newSession) {
+      ctx.inject(['agents'], (agentCtx) => {
+        for (const agent of agentCtx.agents.list()) {
+          const untouched = !agent.session.snapshotEvents().some(event => event.type === 'turn/start'
+            || event.type === 'user/message' || event.type.startsWith('assistant/') || event.type.startsWith('tool/'))
+          if (this.isTopLevel(agent) && agent.status === 'idle' && untouched
+            && this.ctx.workingDirectory.get(agent.session) === agent.session.header.cwd) this.newSessions.add(agent)
+        }
+      })
       ctx.on('agent/created', ({ agent, source }) => {
-        const header = agent.session.header
-        if (source === 'startup' && !header.isSeeded && header.origin !== 'subagent'
-          && (header.delegationDepth ?? 0) === 0) this.newSessions.add(agent)
+        if (source === 'startup' && this.isTopLevel(agent)) this.newSessions.add(agent)
         return undefined
       })
       // Prepare before instruction providers run; empty chat panes need no network work.
@@ -152,6 +158,12 @@ export class WorktreeService extends Service {
         return next()
       }, { prepend: true })
     }
+  }
+
+  /** Exclude inherited histories and delegated Agents from top-level Session preparation. */
+  private isTopLevel(agent: Agent): boolean {
+    const header = agent.session.header
+    return !header.isSeeded && header.origin !== 'subagent' && (header.delegationDepth ?? 0) === 0
   }
 
   /** Gate the first prompt while retaining the original project header and sandbox policy. */
