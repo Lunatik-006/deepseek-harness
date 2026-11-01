@@ -48,6 +48,12 @@ vi.mock('@deepseek-ai/dsh-sandbox-windows-acl', () => {
       if (mockState.disposeFailure !== undefined) throw mockState.disposeFailure
       this.disposed = true
     }
+    addAsync(path: string, standing = false): Promise<void> {
+      return Promise.resolve().then(() => this.add(path, standing))
+    }
+    disposeAsync(): Promise<void> {
+      return Promise.resolve().then(() => this.dispose())
+    }
   }
   return {
     registerAclDiagnosisSkill: vi.fn(),

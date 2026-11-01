@@ -12,7 +12,7 @@
  * @module @deepseek-ai/dsh-sandbox-windows-acl/grant
  */
 
-import { grantWrite, revokeWrite } from './acl.ts'
+import { grantWrite, grantWriteAsync, revokeWrite, revokeWriteAsync } from './acl.ts'
 import { allocPtrSlot, decodePtr, isNullPtr, throwLastError, win32Sync } from './ffi.ts'
 import type { NativePtr, Win32Bindings } from './ffi.ts'
 import { makeWellKnownSid } from './token.ts'
@@ -38,6 +38,8 @@ export class AclWriteGrant {
   private readonly worldSidPtr: NativePtr
   private readonly revocablePaths: string[] = []
   private readonly standingPaths: string[] = []
+  private pending = Promise.resolve()
+  private disposing: Promise<void> | undefined
 
   private constructor(
     api: Win32Bindings,
@@ -107,6 +109,28 @@ export class AclWriteGrant {
     grantWrite(this.api, path, this.sidPtr, this.lowLabelSidPtr, this.worldSidPtr)
   }
 
+  /**
+   * Materialize a Host-owned grant without blocking its event loop. Calls
+   * serialize on this instance; disposal joins every admitted transaction.
+   * The path is tracked after lock acquisition and before the edit, including an apply that completes
+   * after cancellation, so disposal can revoke every private grant.
+   * @param path - the directory whose DACL and label gain the grant.
+   * @param standing - true leaves the workspace edit standing after disposal; false revokes the private grant.
+   * @param signal - cancels acquisition and reports cancellation after an in-flight native apply settles; absent means no cancellation.
+   * @returns completion of the transaction; a rejected operation still requires disposal.
+   */
+  addAsync(path: string, standing = false, signal?: AbortSignal): Promise<void> {
+    if (this.disposing !== undefined) return Promise.reject(new Error('AclWriteGrant is disposing'))
+    const operation = this.pending.then(async () => {
+      signal?.throwIfAborted()
+      await grantWriteAsync(this.api, path, this.sidPtr, this.lowLabelSidPtr, this.worldSidPtr, () => {
+        ;(standing ? this.standingPaths : this.revocablePaths).push(path)
+      }, signal)
+    })
+    this.pending = operation.catch(() => {})
+    return operation
+  }
+
   /** Every directory currently carrying the grant, in grant order. */
   get paths(): readonly string[] {
     return [...this.standingPaths, ...this.revocablePaths]
@@ -122,6 +146,31 @@ export class AclWriteGrant {
         failures.push(error)
       }
     }
+    this.freeSids(failures)
+  }
+
+  /**
+   * Join admitted asynchronous grants, revoke every private edit without
+   * blocking the Host, and release the native SIDs. Repeated calls share the
+   * same completion; synchronous add/dispose remain the separate runner API.
+   * @returns completion after all revocations, or an aggregate of cleanup failures.
+   */
+  disposeAsync(): Promise<void> {
+    this.disposing ??= this.pending.then(async () => {
+      const failures: unknown[] = []
+      for (const path of this.revocablePaths) {
+        try {
+          await revokeWriteAsync(this.api, path, this.sidPtr)
+        } catch (error) {
+          failures.push(error)
+        }
+      }
+      this.freeSids(failures)
+    })
+    return this.disposing
+  }
+
+  private freeSids(failures: unknown[]): void {
     for (const [label, sidPtr] of [
       ['write SID', this.sidPtr],
       ['Low label SID', this.lowLabelSidPtr],

@@ -24,6 +24,7 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import { allocOverlapped, allocPtrSlot, decodePtr, decodeUint8At, decodeUint16At, decodeUint32At, getTempPath, isInvalidHandle, isNullPtr, ptrAddress, sameSidAt, throwLastError, throwWin32 } from './ffi.ts'
 import type { NativePtr, Win32Bindings } from './ffi.ts'
@@ -127,6 +128,104 @@ export function withPathLock<T>(api: Win32Bindings, path: string, action: () => 
 }
 
 /**
+ * Hold the same exclusive path lock without blocking the Host while another
+ * process owns it. Cancellation before acquisition performs no ACL edit;
+ * an acquired transaction finishes before its lock and native buffers leave.
+ * @param api - the binding table.
+ * @param path - the protected absolute directory.
+ * @param action - the complete asynchronous read-merge-set transaction.
+ * @param signal - cancels lock acquisition when supplied; otherwise waits for the owner.
+ * @returns the transaction result.
+ */
+export async function withPathLockAsync<T>(api: Win32Bindings, path: string, action: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted()
+  const lockPath = lockFilePath(api, path)
+  mkdirSync(dirname(lockPath), { recursive: true })
+  const handle = api.createFileW(
+    lockPath, abi.GENERIC_READ | abi.GENERIC_WRITE,
+    abi.FILE_SHARE_READ | abi.FILE_SHARE_WRITE, null, abi.OPEN_ALWAYS, 0, null,
+  )
+  if (isInvalidHandle(handle)) throwLastError(api, 'CreateFileW', lockPath)
+  const overlapped = allocOverlapped()
+  let locked = false
+  try {
+    // FAIL_IMMEDIATELY preserves thread-local GetLastError on this thread.
+    while (!locked) {
+      signal?.throwIfAborted()
+      locked = api.lockFileEx(handle, abi.LOCKFILE_EXCLUSIVE_LOCK | abi.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, overlapped) !== 0
+      if (!locked) {
+        const code = api.getLastError()
+        if (code !== abi.ERROR_LOCK_VIOLATION) throwWin32(api, 'LockFileEx', code, lockPath)
+        await delay(10, undefined, { signal })
+      }
+    }
+    signal?.throwIfAborted()
+    const result = await action()
+    signal?.throwIfAborted()
+    if (api.unlockFileEx(handle, 0, 1, 0, overlapped) === 0) {
+      const code = api.getLastError()
+      locked = false
+      throwWin32(api, 'UnlockFileEx', code, lockPath)
+    }
+    locked = false
+    if (api.closeHandle(handle) === 0) throwLastError(api, 'CloseHandle', `lock file ${lockPath}`)
+    return result
+  } catch (error) {
+    if (locked) api.unlockFileEx(handle, 0, 1, 0, overlapped)
+    api.closeHandle(handle)
+    throw error
+  }
+}
+
+// Both execution modes share the allocation-owning transaction; only the
+// potentially blocking security reads and inherited updates change threads.
+type SecurityCall =
+  | { kind: 'read'; args: Parameters<Win32Bindings['getNamedSecurityInfoW']> }
+  | { kind: 'apply'; args: Parameters<Win32Bindings['setNamedSecurityInfoW']> }
+type SecuritySteps<T> = Generator<SecurityCall, T, number>
+
+function runSecuritySteps<T>(api: Win32Bindings, steps: SecuritySteps<T>): T {
+  let step = steps.next()
+  while (!step.done) {
+    const call = step.value
+    let value: number
+    try {
+      value = call.kind === 'read' ? api.getNamedSecurityInfoW(...call.args) : api.setNamedSecurityInfoW(...call.args)
+    } catch (error) {
+      step = steps.throw(error)
+      continue
+    }
+    step = steps.next(value)
+  }
+  return step.value
+}
+
+function callAsync<Args extends unknown[]>(call: (...args: Args) => number, args: Args): Promise<number> {
+  // Koffi binds both forms on the same function; the public Win32 interface
+  // intentionally describes the synchronous form used by the runner.
+  const native = call as typeof call & { async: (...args: [...Args, (error: Error | null, result: number) => void]) => void }
+  return new Promise((resolve, reject) => native.async(...args, (error, result) => error === null ? resolve(result) : reject(error)))
+}
+
+async function runSecurityStepsAsync<T>(api: Win32Bindings, steps: SecuritySteps<T>): Promise<T> {
+  let step = steps.next()
+  while (!step.done) {
+    const call = step.value
+    let value: number
+    try {
+      value = call.kind === 'read'
+        ? await callAsync(api.getNamedSecurityInfoW, call.args)
+        : await callAsync(api.setNamedSecurityInfoW, call.args)
+    } catch (error) {
+      step = steps.throw(error)
+      continue
+    }
+    step = steps.next(value)
+  }
+  return step.value
+}
+
+/**
  * Read the directory's current explicit DACL and mandatory label via
  * GetNamedSecurityInfoW.
  * Allocation contract (the POC's RevokeAccess, minus its missing checks): the
@@ -138,19 +237,19 @@ export function withPathLock<T>(api: Win32Bindings, path: string, action: () => 
  * @param path - the directory whose DACL and label are read.
  * @returns the current explicit DACL and label ACL (null when the directory carries none) plus their owning descriptor.
  */
-function readCurrentSecurity(
+function* readCurrentSecurity(
   api: Win32Bindings,
   path: string,
-): { oldAcl: NativePtr | null; labelAcl: NativePtr | null; descriptor: NativePtr | null } {
+): SecuritySteps<{ oldAcl: NativePtr | null; labelAcl: NativePtr | null; descriptor: NativePtr | null }> {
   const ownerSlot = allocPtrSlot()
   const groupSlot = allocPtrSlot()
   const daclSlot = allocPtrSlot()
   const saclSlot = allocPtrSlot()
   const descriptorSlot = allocPtrSlot()
-  const readResult = api.getNamedSecurityInfoW(
+  const readResult = yield { kind: 'read', args: [
     path, abi.SE_FILE_OBJECT, abi.DACL_SECURITY_INFORMATION | abi.LABEL_SECURITY_INFORMATION,
     ownerSlot, groupSlot, daclSlot, saclSlot, descriptorSlot,
-  )
+  ] }
   if (readResult !== abi.ERROR_SUCCESS) throwWin32(api, 'GetNamedSecurityInfoW', readResult, path)
   return { oldAcl: decodePtr(daclSlot), labelAcl: decodePtr(saclSlot), descriptor: decodePtr(descriptorSlot) }
 }
@@ -226,7 +325,7 @@ type LabelEdit = { kind: 'apply'; acl: NativePtr } | { kind: 'clear' } | { kind:
  * @param descriptor - the descriptor allocation owning `oldAcl`.
  * @param label - the caller's name for error details.
  */
-function mergeAndApply(
+function* mergeAndApply(
   api: Win32Bindings,
   path: string,
   entries: Buffer,
@@ -234,7 +333,7 @@ function mergeAndApply(
   labelEdit: LabelEdit,
   descriptor: NativePtr | null,
   label: string,
-): void {
+): SecuritySteps<void> {
   const newAclSlot = allocPtrSlot()
   const mergeResult = api.setEntriesInAclW(entries.length / abi.EXPLICIT_ACCESS_W_SIZE, entries, oldAcl, newAclSlot)
   if (mergeResult !== abi.ERROR_SUCCESS) {
@@ -252,13 +351,19 @@ function mergeAndApply(
   // The descriptor block (oldAcl included) is dead after the merge — free it
   // before applying, exactly like the POC.
   const freedDescriptor = descriptor !== null ? api.localFree(descriptor) : null
-  const applyResult = api.setNamedSecurityInfoW(
-    path, abi.SE_FILE_OBJECT,
-    labelEdit.kind === 'keep' ? abi.DACL_SECURITY_INFORMATION : abi.DACL_SECURITY_INFORMATION | abi.LABEL_SECURITY_INFORMATION,
-    null, null, newAcl, labelEdit.kind === 'apply' ? labelEdit.acl : null,
-  )
-  const freedNew = api.localFree(newAcl)
-  const freedLabel = labelEdit.kind === 'apply' ? api.localFree(labelEdit.acl) : null
+  let applyResult: number
+  let freedNew: NativePtr
+  let freedLabel: NativePtr | null
+  try {
+    applyResult = yield { kind: 'apply', args: [
+      path, abi.SE_FILE_OBJECT,
+      labelEdit.kind === 'keep' ? abi.DACL_SECURITY_INFORMATION : abi.DACL_SECURITY_INFORMATION | abi.LABEL_SECURITY_INFORMATION,
+      null, null, newAcl, labelEdit.kind === 'apply' ? labelEdit.acl : null,
+    ] }
+  } finally {
+    freedNew = api.localFree(newAcl)
+    freedLabel = labelEdit.kind === 'apply' ? api.localFree(labelEdit.acl) : null
+  }
   if (applyResult !== abi.ERROR_SUCCESS) throwWin32(api, 'SetNamedSecurityInfoW', applyResult, `${label}(${path})`)
   if (freedDescriptor !== null && !isNullPtr(freedDescriptor)) throwLastError(api, 'LocalFree', `${label}(${path}) descriptor`)
   if (!isNullPtr(freedNew)) throwLastError(api, 'LocalFree', `${label}(${path}) new ACL`)
@@ -381,36 +486,56 @@ export function grantWrite(
   lowLabelSidPtr: NativePtr,
   worldSidPtr: NativePtr,
 ): void {
-  withPathLock(api, path, () => {
-    const { oldAcl, labelAcl, descriptor } = readCurrentSecurity(api, path)
-    if (oldAcl !== null && labelAcl !== null
-      && hasExactGrant(oldAcl, sidPtr) && hasExactDeny(oldAcl, worldSidPtr)
-      && hasExactLabel(labelAcl, lowLabelSidPtr)) {
-      // The exact ACE, deny, and label stand: releasing the descriptor is the whole operation.
-      if (descriptor !== null) {
-        const freed = api.localFree(descriptor)
-        if (!isNullPtr(freed)) throwLastError(api, 'LocalFree', `grantWrite(${path}) descriptor`)
-      }
-      return
+  withPathLock(api, path, () => runSecuritySteps(api, grantWriteSteps(api, path, sidPtr, lowLabelSidPtr, worldSidPtr)))
+}
+
+/**
+ * Apply the same grant while native security reads and inheritance run off the Host event loop.
+ * @param api - the binding table.
+ * @param path - the directory to grant.
+ * @param sidPtr - the capability SID.
+ * @param lowLabelSidPtr - the Low integrity SID.
+ * @param worldSidPtr - the Everyone SID.
+ * @param onAcquired - records cleanup ownership after acquisition and before any possible edit.
+ * @param signal - cancels acquisition and reports cancellation after an in-flight apply settles; absent means no cancellation.
+ * @returns completion of the entire grant transaction.
+ */
+export function grantWriteAsync(api: Win32Bindings, path: string, sidPtr: NativePtr, lowLabelSidPtr: NativePtr, worldSidPtr: NativePtr, onAcquired: () => void, signal?: AbortSignal): Promise<void> {
+  return withPathLockAsync(api, path, () => {
+    onAcquired()
+    return runSecurityStepsAsync(api, grantWriteSteps(api, path, sidPtr, lowLabelSidPtr, worldSidPtr))
+  }, signal)
+}
+
+function* grantWriteSteps(api: Win32Bindings, path: string, sidPtr: NativePtr, lowLabelSidPtr: NativePtr, worldSidPtr: NativePtr): SecuritySteps<void> {
+  const { oldAcl, labelAcl, descriptor } = yield* readCurrentSecurity(api, path)
+  if (oldAcl !== null && labelAcl !== null
+    && hasExactGrant(oldAcl, sidPtr) && hasExactDeny(oldAcl, worldSidPtr)
+    && hasExactLabel(labelAcl, lowLabelSidPtr)) {
+    // The exact ACE, deny, and label stand: releasing the descriptor is the whole operation.
+    if (descriptor !== null) {
+      const freed = api.localFree(descriptor)
+      if (!isNullPtr(freed)) throwLastError(api, 'LocalFree', `grantWrite(${path}) descriptor`)
     }
-    let label: NativePtr
-    try {
-      label = buildLowLabelAcl(api, lowLabelSidPtr)
-    } catch (error) {
-      // The read already owns a descriptor allocation; release it before the
-      // label failure propagates.
-      if (descriptor !== null) api.localFree(descriptor)
-      throw error
-    }
-    mergeAndApply(
-      api, path,
-      Buffer.concat([
-        buildExplicitAccess(worldSidPtr, abi.DENY_ACCESS, abi.FILE_DELETE_CHILD, abi.CONTAINER_INHERIT_ACE),
-        buildExplicitAccess(sidPtr, abi.GRANT_ACCESS, abi.GRANT_MASK),
-      ]),
-      oldAcl, { kind: 'apply', acl: label }, descriptor, 'grantWrite',
-    )
-  })
+    return
+  }
+  let label: NativePtr
+  try {
+    label = buildLowLabelAcl(api, lowLabelSidPtr)
+  } catch (error) {
+    // The read already owns a descriptor allocation; release it before the
+    // label failure propagates.
+    if (descriptor !== null) api.localFree(descriptor)
+    throw error
+  }
+  yield* mergeAndApply(
+    api, path,
+    Buffer.concat([
+      buildExplicitAccess(worldSidPtr, abi.DENY_ACCESS, abi.FILE_DELETE_CHILD, abi.CONTAINER_INHERIT_ACE),
+      buildExplicitAccess(sidPtr, abi.GRANT_ACCESS, abi.GRANT_MASK),
+    ]),
+    oldAcl, { kind: 'apply', acl: label }, descriptor, 'grantWrite',
+  )
 }
 
 /**
@@ -429,20 +554,33 @@ export function grantWrite(
  * @returns whether an ACE removal was attempted (false when the directory carries no DACL at all).
  */
 export function revokeWrite(api: Win32Bindings, path: string, sidPtr: NativePtr): boolean {
-  return withPathLock(api, path, () => {
-    const { oldAcl, descriptor } = readCurrentSecurity(api, path)
-    if (oldAcl === null) {
-      if (descriptor !== null) {
-        const freed = api.localFree(descriptor)
-        if (!isNullPtr(freed)) throwLastError(api, 'LocalFree', `revokeWrite(${path}) descriptor`)
-      }
-      return false
+  return withPathLock(api, path, () => runSecuritySteps(api, revokeWriteSteps(api, path, sidPtr)))
+}
+
+/**
+ * Revoke a grant without blocking the Host during lock waits or inherited ACL updates.
+ * @param api - the binding table.
+ * @param path - the granted directory.
+ * @param sidPtr - the capability SID to revoke.
+ * @returns whether an ACE removal was attempted.
+ */
+export function revokeWriteAsync(api: Win32Bindings, path: string, sidPtr: NativePtr): Promise<boolean> {
+  return withPathLockAsync(api, path, () => runSecurityStepsAsync(api, revokeWriteSteps(api, path, sidPtr)))
+}
+
+function* revokeWriteSteps(api: Win32Bindings, path: string, sidPtr: NativePtr): SecuritySteps<boolean> {
+  const { oldAcl, descriptor } = yield* readCurrentSecurity(api, path)
+  if (oldAcl === null) {
+    if (descriptor !== null) {
+      const freed = api.localFree(descriptor)
+      if (!isNullPtr(freed)) throwLastError(api, 'LocalFree', `revokeWrite(${path}) descriptor`)
     }
-    mergeAndApply(
-      api, path, buildExplicitAccess(sidPtr, abi.REVOKE_ACCESS, 0), oldAcl,
-      hasForeignGrant(oldAcl, sidPtr) ? { kind: 'keep' } : { kind: 'clear' },
-      descriptor, 'revokeWrite',
-    )
-    return true
-  })
+    return false
+  }
+  yield* mergeAndApply(
+    api, path, buildExplicitAccess(sidPtr, abi.REVOKE_ACCESS, 0), oldAcl,
+    hasForeignGrant(oldAcl, sidPtr) ? { kind: 'keep' } : { kind: 'clear' },
+    descriptor, 'revokeWrite',
+  )
+  return true
 }
