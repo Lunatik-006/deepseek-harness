@@ -140,7 +140,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
   ])
   const processProseHidden = commandsOnly && processMember && !liveProcess && !processAnswer
     && routedNode?.kind === 'assistant-step' && groupPart !== 'reasoning'
-  if (routedNode === undefined || owner === null || processProseHidden) return null
+  if (routedNode === undefined || owner === null) return null
   // Runtime dispatch owns the correlation: every Node's discriminant is the
   // keyed-slot entry passed alongside that same Node. TypeScript does not
   // distribute an object containing a union into a union of objects itself.
@@ -161,7 +161,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
       data-turn-process-hidden={processHidden || undefined}
       data-turn-process-answer={compactAnswer || undefined}
     >
-      {renderSlot('conversation.chat.node', routedOwner, {
+      {processProseHidden ? null : renderSlot('conversation.chat.node', routedOwner, {
         entryKey: routedNode.kind,
         hookContext,
         fallback: (
