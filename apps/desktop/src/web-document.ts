@@ -39,6 +39,7 @@ export async function serveWebDocument(request: Request, root: string): Promise<
 /**
  * Exchange the Host launch URL for an authority-bound browser cookie.
  * @param url - Authenticated URL reported by the owned Host process.
+ * @param transport - Optional main-owned local proof for a registered actor adapter.
  * @returns Cookie header for requests forwarded to that Host.
  */
 export async function authenticateWebHost(url: string, transport?: DesktopLocalTransport): Promise<string> {
@@ -74,6 +75,7 @@ const PLUGIN_BUNDLE_PATH = /^\/plugins\//u
  * @param request - Request from the application origin.
  * @param host - Owned Host URL.
  * @param cookie - Host-issued authentication cookie.
+ * @param transport - Optional main-owned local proof, never renderer-supplied.
  * @returns Host response without connection-level headers.
  */
 export async function forwardWebRequest(request: Request, host: string, cookie: string, transport?: DesktopLocalTransport): Promise<Response> {
