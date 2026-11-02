@@ -15,6 +15,10 @@ import type { SessionBinding, SessionListState } from '../sessions/service.ts'
 import type { SessionFace } from './session.ts'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { SessionReferenceSource } from '../index.ts'
+import type { SessionCreateRequest, SessionCreateValue } from '../../types.ts'
+
+/** Deployment-owned creation transport; the native manager retains catalog publication. */
+export type SessionCreationProvider = (request: SessionCreateRequest, creationKey?: string) => Promise<RemoteResult<SessionCreateValue>>
 
 export type { AgentContext } from '../scope.ts'
 
@@ -47,6 +51,11 @@ export interface SessionRetainInfo {
 
 /** The sessions-service face injected as `ctx.sessions`. */
 export interface ISessions {
+  /** Install an exclusive deployment creation route when supported by the client adapter.
+   * @param provider - transport for normalized create requests; other Session operations stay native.
+   * @returns disposer; removal blocks creation until another provider is registered.
+   */
+  registerCreationProvider?(provider: SessionCreationProvider): () => void
   /** Host catalog and local reference-source counts; navigation belongs to view owners. */
   readonly list: ObservableSnapshot<SessionListState>
   /**
@@ -90,6 +99,8 @@ export interface ISessions {
     cwd?: string
     sessionId?: SessionId
     agentPreset?: string
+    /** Explicit deployment operation identity; never forwarded to the native create endpoint. */
+    creationKey?: string
   }): Promise<SessionId>
   /**
    * Resolve an already discovered direct-parent address without opening it.

@@ -10,6 +10,8 @@ Desktop analytics follows the [product collection policy](../../client/product-a
 
 ## Summary
 
+Deployment clients can install an exclusive new-Session transport through sessions.registerCreationProvider. Sidebar, shortcuts and plugin callers still use sessions.create and its native catalogue/retention path. The optional client creationKey identifies one deployment operation and is not forwarded to ordinary native Remote create. Disposing the provider blocks future creation until a replacement is registered; existing Session operations are unchanged.
+
 `@deepseek-ai/dsh-api-session-controller` owns the Host `ctx.sessionController` service and the generated Client `session`, `skills`, and `fileReferences` Remote namespaces. It serves Session lifecycle and history, the Host-generation model catalog, human background-job kill, workspace-path opening, user-invocable skill discovery, and Agent-scoped file references. Use it through API Gateway when a Client needs operations addressed by a Session.
 
 ## Table of Contents
