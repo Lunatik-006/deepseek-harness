@@ -69,6 +69,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
     }
   }, [actions, processSpec, alwaysOpen])
   const foldCompleted = usePresentation(policy => policy.foldCompletedTurns)
+  const commandsOnly = usePresentation(policy => policy.commandsOnlyProcessDetails === true)
   // A loaded end makes a partial historical Turn eligible without its start.
   const processWindowReady = processSpec !== undefined
     && processPresentation !== undefined
@@ -137,7 +138,9 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
     node, groupPart, cwd, openFile, inspectCall, forkAt,
     loadImage, fileMentions, turnProcess,
   ])
-  if (routedNode === undefined || owner === null) return null
+  const processProseHidden = commandsOnly && processMember && !liveProcess && !processAnswer
+    && routedNode?.kind === 'assistant-step' && groupPart !== 'reasoning'
+  if (routedNode === undefined || owner === null || processProseHidden) return null
   // Runtime dispatch owns the correlation: every Node's discriminant is the
   // keyed-slot entry passed alongside that same Node. TypeScript does not
   // distribute an object containing a union into a union of objects itself.
