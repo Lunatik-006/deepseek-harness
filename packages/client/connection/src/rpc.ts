@@ -161,8 +161,8 @@ export interface ConnectionFetchRoute {
   readonly requestBody: ConnectionRequestBodyMode
   /**
    * Handle one request after the physical carrier has applied its trust and
-   * authentication policy. Only owner Peers reach an exact route; the shared
-   * handler answers 403 for every other principal.
+   * authentication policy. Non-owner Peers additionally require the registered
+   * provider's resource authorization for this exact request.
    */
   readonly fetch: (request: Request, peer: PeerScope) => Promise<Response>
 }
@@ -256,6 +256,7 @@ export interface HostConnectionHandle extends NativeDesktopLocalAdmission {
    * @returns the Peer and idempotent release, or 409 for duplicate API ownership.
    * The carrier releases on socket termination or failed upgrade; release removes
    * API admission synchronously without cancelling independent HTTP calls.
+   * Provider-owned shared browser records retain their existing Peer lifetime.
    */
   admitConnection(request: ConnectionTrustRequest): ConnectionAdmission
 
@@ -290,7 +291,7 @@ export interface ConnectionFetchHandler {
    * Dispatch one already-authenticated request.
    * @param request - Fetch request below the shared channel.
    * @param peer - Peer to dispatch as; required, never defaulted.
-   * @returns the registered response, a 403 response for an exact route and a non-owner Peer, or a 404 response.
+   * @returns the registered response, 403 when exact-route resource authorization fails, or 404 when no route owns the request.
    */
   fetch(request: Request, peer: PeerScope): Promise<Response>
 }

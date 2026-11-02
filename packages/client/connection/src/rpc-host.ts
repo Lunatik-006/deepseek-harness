@@ -377,7 +377,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
         const pathname = new URL(request.url).pathname
         const route = this.fetchRoutes.get(pathname)
         if (route?.methods.has(request.method) === true) {
-          // Exact routes bypass Gateway access checks, so only the owner reaches them.
+          // Exact routes bypass Gateway; the provider must authorize each resource.
           // oxlint-disable-next-line typescript/no-unnecessary-condition -- other packages merge non-owner kinds into PrincipalMap.
           if (peer.principal.kind !== 'owner') {
             return Promise.resolve(this.browserAdmission?.authorizeFetch?.(request, peer) ?? false)

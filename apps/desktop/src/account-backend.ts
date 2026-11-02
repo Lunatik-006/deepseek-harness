@@ -81,6 +81,7 @@ export interface DesktopAccountBackend {
  * @param origin - Host Web origin.
  * @param invoke - validated unary RPC caller.
  * @param cookies - Electron session cookie reader.
+ * @param nativeHeaders - Main-owned local proof for this already-selected Host.
  * @returns account operations; watch callers own their subscriptions.
  */
 export function desktopAccountBackend(origin: string, invoke: AccountInvoke, cookies: () => Promise<string>, nativeHeaders: Readonly<Record<string, string>> = {}): DesktopAccountBackend {
