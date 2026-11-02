@@ -196,7 +196,8 @@ export class FileSystemSkillProvider implements SkillProvider {
   async list(options: SkillLookupOptions): Promise<SkillCandidate[] | SkillProviderObservation> {
     const project=await platformSkillProject(this.ctx,options)
     const realm=platformSkillReadContext(this.ctx,project)
-    const roots = await this.roots(project?.cwd??options.cwd,realm,project)
+    const discoveredRoots = await this.roots(project?.cwd??options.cwd,realm,project)
+    const roots=this.ctx.get('platformProjectConfig' as keyof Context)&&!(options.scope as {session?:unknown}|undefined)?.session?discoveredRoots.filter(root=>root.source==='bundled'):discoveredRoots
     let complete = true
     try {
       if(!project?.executorId)await this.watchManager.observeRoots(roots)
