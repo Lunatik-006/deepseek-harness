@@ -25,7 +25,7 @@ import { Notifier } from './notifier.ts'
 import { ProjectionValueStore } from './projection-store.ts'
 import { Session } from './session.ts'
 import type { SessionRemotes } from './remotes.ts'
-import type { SessionTarget } from '../contract/sessions.ts'
+import type { SessionCreationProvider, SessionTarget } from '../contract/sessions.ts'
 
 function sessionSeqCursor(value: number): SessionSeqCursor {
   return value === -1 ? -1 : SessionSeq(value)
@@ -503,6 +503,7 @@ export class SessionManager {
    * wait for the next refresh). A created session is blank by definition
    * (entity birth precedes the first message).
    * @param opts - target workspace or working directory, an optional blank Session to reuse, and an optional Agent preset.
+   * @param create - optional deployment transport; absence keeps native Remote creation.
    * @returns the create result, naming the Session the Host created or reused.
   */
   async create(
@@ -511,7 +512,10 @@ export class SessionManager {
       cwd?: string
       sessionId?: SessionId
       agentPreset?: string
+      /** Explicit deployment operation identity; never forwarded to the native create endpoint. */
+      creationKey?: string
     } = {},
+    create?: SessionCreationProvider,
   ): Promise<RemoteResult<{ sessionId: SessionId }>> {
     const shared = {
       ...(opts.sessionId === undefined ? {} : { sessionId: opts.sessionId }),
@@ -520,7 +524,7 @@ export class SessionManager {
     const payload = opts.workspaceId !== undefined
       ? { workspaceId: opts.workspaceId, ...shared }
       : { ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }), ...shared }
-    const result = await this.remote.session.create(payload)
+    const result = await (create === undefined ? this.remote.session.create(payload) : create(payload, opts.creationKey))
     if (result.ok) {
       this.recordMutation({ kind: 'placeholder', summary: { agentAvailable: true,
         sessionId: result.value.sessionId, updatedAt: Date.now(), running: false, blank: true,

@@ -10,6 +10,8 @@ kind: "package-reference"
 
 ## 概述
 
+部署客户端可通过 sessions.registerCreationProvider 安装独占的新 Session 传输。侧栏、快捷键和插件仍使用 sessions.create 及其原生目录发布与保留流程。可选客户端 creationKey 标识一次部署操作，不会发送给普通原生 Remote create。注销提供方后，新建操作会被拒绝，直到注册替代提供方；既有 Session 操作不变。
+
 `@deepseek-ai/dsh-api-session-controller` 拥有 Host 的 `ctx.sessionController` 服务，以及生成的 Client `session`、`skills` 和 `fileReferences` Remote namespace。它提供 Session 生命周期与历史、Host generation 模型目录、人工后台任务终止、工作区路径打开、用户可调用 skill（技能）发现和 Agent（智能体）范围的文件引用。当 Client 需要按 Session 寻址的操作时，请通过 API Gateway 使用它。
 
 ## 目录

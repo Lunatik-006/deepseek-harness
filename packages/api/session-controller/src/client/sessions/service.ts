@@ -13,7 +13,7 @@ import type { RemoteFailure, RemoteResult } from '@deepseek-ai/dsh-typert-protoc
 import type { SessionEventSource } from '../contract/events.ts'
 import type { SessionFace } from '../contract/session.ts'
 import type {
-  AgentContext, ISessions, SessionReference, SessionRetainInfo, SessionRetainOptions, SessionTarget,
+  AgentContext, ISessions, SessionCreationProvider, SessionReference, SessionRetainInfo, SessionRetainOptions, SessionTarget,
 } from '../contract/sessions.ts'
 import type { SessionReferenceSource } from '../index.ts'
 import { createScope, scopeIdentityOf, scopeOf as scopeTagOf } from '../scope.ts'
@@ -242,6 +242,7 @@ export class ClientSessions implements ISessions {
   /** Catalog metadata and local reference-source projection. */
   readonly list: SnapshotStore<SessionListState>
   /** The object-layer instance cluster and frame dispatch entry. */
+  private creation: { kind: 'native' } | { kind: 'provider', run: SessionCreationProvider } | { kind: 'unavailable' } = { kind: 'native' }
   private readonly manager: SessionManager
   private readonly scopes = new Map<SessionId, ScopeRecord>()
   /** Stable per-id sources retained for the Client root lifetime, including across generation replacement. */
@@ -424,6 +425,17 @@ export class ClientSessions implements ISessions {
     this.manager.handleConnected()
   }
 
+  /** Replace only new-Session transport while preserving native catalog and retention behavior.
+   * @param provider - deployment-owned transport for a normalized request.
+   * @returns disposer that fails closed until a replacement is installed.
+   */
+  registerCreationProvider(provider: SessionCreationProvider): () => void {
+    if (this.closed || this.creation.kind === 'provider') throw new Error('Session creation provider is already registered or closed')
+    const entry = { kind: 'provider' as const, run: provider }
+    this.creation = entry
+    return () => { if (this.creation === entry) this.creation = { kind: 'unavailable' } }
+  }
+
   /**
    * Create a Host Session and publish its catalog row before resolving.
    * Callers retain the returned identity before borrowing its binding.
@@ -436,8 +448,11 @@ export class ClientSessions implements ISessions {
     cwd?: string
     sessionId?: SessionId
     agentPreset?: string
+    /** Explicit deployment operation identity; never forwarded to the native create endpoint. */
+    creationKey?: string
   } = {}): Promise<SessionId> {
-    const result = await this.manager.create(opts)
+    if (this.closed || this.creation.kind === 'unavailable') throw new Error('Session creation provider is unavailable')
+    const result = await this.manager.create(opts, this.creation.kind === 'provider' ? this.creation.run : undefined)
     if (!result.ok) throw new SessionCreateError(result.error, opts.sessionId)
     this.projectList()
     return result.value.sessionId
