@@ -10,6 +10,8 @@ Desktop product events use the optional [product analytics service](../product-a
 
 ## Summary
 
+Set ui-chat.commandsOnlyProcessDetails to true in the Chat plugin configuration to hide reasoning bodies and thinking-text title previews in every work-details mode, including expanded Process groups. The default is false. Assistant prose, images, commands, native Session events, reasoning data and replay remain unchanged; this is a presentation preference.
+
 Use this package to render a browser chat from recorded Session conversations, including historical images, localized actions, and restored scroll position. Work-details modes control reasoning previews and process visibility without hiding final answers; Verbose keeps completed-turn process rows visible. Local transcript and steering submissions appear immediately, remain in their original surface, and disappear atomically when authoritative Session records arrive, while queued submissions stay outside Chat. The package does not assemble or modify model requests.
 
 File-mention providers receive the viewed Session ID with the closing-turn owner, so links into inherited history can address the fork itself.
