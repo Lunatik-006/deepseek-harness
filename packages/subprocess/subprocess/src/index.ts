@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import { win32 } from 'node:path'
 /**
  * Service Definition for the subprocess capability seam (`ctx.subprocess`): execution-world executable lookup,
  * fully specified provider-managed process ranges with raw or
@@ -58,6 +60,9 @@ export const SENSITIVE_ENV_PATTERN = /KEY|PASSWORD|SECRET|TOKEN/i
  * deliberate lowercase `dsh_*` names on POSIX are implausible. Exported as a plain function so spawners
  * that cannot route through the service (node-pty backends, SDK-managed
  * transports) share the one scrub definition.
+ * On Windows, ambient `SHELL` is also removed: POSIX consumers such as Git
+ * must not select an inherited PowerShell path as their command interpreter.
+ * POSIX hosts retain `SHELL`, and an explicit child env override still wins.
  *
  * When a proxy is active the result also carries the resolved proxy names and the flag a child Node
  * needs to honor them, so a child inherits the same routing as its parent.
@@ -75,6 +80,19 @@ export function scrubbedParentEnv(): Record<string, string> {
   for (const [name, value] of Object.entries(proxyEnvironmentForChild())) {
     if (value === undefined) Reflect.deleteProperty(env, name)
     else env[name] = value
+  }
+  if (process.platform === 'win32') {
+    for (const key of Object.keys(env)) {
+      if (key.toUpperCase() === 'SHELL') Reflect.deleteProperty(env, key)
+    }
+  }
+  // Native Windows Git SSH avoids an unnecessary MSYS dependency under confinement.
+  if (process.platform === 'win32' && !Object.keys(env).some(key => ['GIT_SSH', 'GIT_SSH_COMMAND'].includes(key.toUpperCase()))) {
+    const systemRoot = Object.entries(env).find(([key]) => key.toUpperCase() === 'SYSTEMROOT')?.[1]
+    if (systemRoot) {
+      const ssh = win32.join(systemRoot, 'System32', 'OpenSSH', 'ssh.exe')
+      if (existsSync(ssh)) env.GIT_SSH = ssh
+    }
   }
   return env
 }

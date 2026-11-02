@@ -77,7 +77,7 @@ A terminal request can opt into `shellActivity`. `inspectActivity()` combines su
 
 ### Environment every child starts from
 
-Children never inherit the harness's ambient secrets: credential-shaped names and ambient `DSH_*` facts are scrubbed, and the caller's explicit `env` merges after that scrub. A deliberately forwarded credential or a current `DSH_*` deployment fact still reaches the child; an explicit `undefined` tombstone removes an ordinary ambient entry.
+Children never inherit the harness's ambient secrets: credential-shaped names and ambient `DSH_*` facts are scrubbed, and the caller's explicit `env` merges after that scrub. A deliberately forwarded credential or a current `DSH_*` deployment fact still reaches the child; an explicit `undefined` tombstone removes an ordinary ambient entry. On Windows, ambient `SHELL` is removed so POSIX consumers such as Git do not select an inherited PowerShell path; POSIX hosts retain it, and an explicit child override still wins.
 
 ### What can go wrong
 
