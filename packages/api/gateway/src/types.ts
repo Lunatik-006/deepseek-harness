@@ -4,7 +4,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { PeerScope, RemoteUplinkWindow, TypertResourceReader } from '@deepseek-ai/dsh-typert-protocol'
+import type { PeerScope, Principal, RemoteUplinkWindow, TypertResourceReader } from '@deepseek-ai/dsh-typert-protocol'
 import type { RemoteEventHostInfo } from './stream-protocol.ts'
 
 /** One Remote method request after a carrier has decoded its envelope. */
@@ -146,6 +146,8 @@ export type TypertGatewayErrorCode =
 
 /** Host dispatcher consumed by Connection adapters. */
 export interface TypertGateway {
+  /** Register the installation's sole session-scoped interaction permission check. */
+  registerInteractionPolicy(policy: (principal: Principal, agentId: TypertRemoteEventContext['agentId']) => boolean): () => void
   /** Carrier adapter shared by WebSocket and in-process transports. */
   readonly wireStream: TypertGatewayWireStream
 
