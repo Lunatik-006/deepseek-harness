@@ -12,7 +12,7 @@ import { canOpenNativePath, nativeFileManager, nativeFileApplications, openNativ
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-projection-cache'
 import type { SessionObservation } from '@deepseek-ai/dsh-session-query'
-import { Remote, RemoteError, TypertRemoteService, principalOf, type TypertResourceResolveInput } from '@deepseek-ai/dsh-typert-protocol'
+import { Remote, RemoteError, TypertRemoteService, actorPrincipalOf, type TypertResourceResolveInput } from '@deepseek-ai/dsh-typert-protocol'
 import { canonicalClientTimeZone } from '@deepseek-ai/dsh-util-time'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import type {} from '@deepseek-ai/dsh-api-remote-access'
@@ -312,10 +312,10 @@ export class SessionController extends TypertRemoteService {
    */
   @Remote('selectModel')
   selectModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue> {
-    // Capture the verified caller before entering the Host-owned commands object.
-    const principal = this.ctx.invocation?.peer.principal
-    // `platform-human` is a merge-extended principal kind owned by the platform
-    // access plugin, so the Host compares it as a string rather than a literal.
+    // Capture the verified author before entering the Host-owned commands
+    // object: a platform human's session choice must not replace the
+    // installation default, while the owner's choice still does.
+    const principal = actorPrincipalOf(this.ctx.invocation)
     const kind: string | undefined = principal?.kind
     return this.commands.selectModel(request, { persistDefault: kind !== 'platform-human' })
   }
@@ -483,7 +483,7 @@ export class SessionController extends TypertRemoteService {
       )
     }
     // The caller is recorded only when it is not the owner, so owner messages keep their exact source.
-    const principal = principalOf(this.ctx.invocation)
+    const principal = actorPrincipalOf(this.ctx.invocation)
     const source: MessageSource = {
       kind: 'user',
       rpcId: request.requestId,
