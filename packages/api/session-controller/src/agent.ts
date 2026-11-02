@@ -2,6 +2,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
+import { platformExecutionWorkspaceDirectory } from '@deepseek-ai/dsh-workspace'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type {
@@ -562,7 +563,12 @@ export class ApiSessionAgentController {
 
   private async createAgent(sessionId: SessionId, cwd: string, composition: ApiSessionComposition): Promise<Agent> {
     try {
-      await mkdir(cwd, { recursive: true })
+      const remote = await platformExecutionWorkspaceDirectory(this.ctx, cwd)
+      if (remote === undefined) await mkdir(cwd, { recursive: true })
+      else {
+        if (remote.status !== 'ok') throw new Error('Configured execution workspace is unavailable')
+        cwd = remote.path
+      }
     } catch (error: unknown) {
       throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
     }
