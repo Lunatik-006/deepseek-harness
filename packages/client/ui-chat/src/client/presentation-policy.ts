@@ -6,6 +6,8 @@ export { COLLAPSE_TIMINGS, type CollapseTiming } from '../chat-settings.ts'
 
 /** Presentation capabilities that one work-details mode enables. */
 export interface ChatPresentationPolicy {
+  /** Suppress reasoning bodies independently of disclosure and detail mode. */
+  readonly commandsOnlyProcessDetails?: boolean
   /** Preference identity for layout resets and diagnostics; renderers select the capabilities below. */
   readonly mode: TranscriptViewMode
   /** Saved collapse timing; completion retains the default immediate folding and scrolling. */
@@ -82,18 +84,27 @@ export function presentationPolicyFor(
  * Combine Host-backed detail and persisted timing without owning subscriptions.
  * @param mode - live work-details mode.
  * @param collapseTiming - live Host-backed collapse timing.
+ * @param commandsOnlyProcessDetails - optional live reasoning suppression; absence preserves reasoning.
  * @returns observable policy whose subscriptions follow both preferences.
  */
 export function derivePresentationPolicy(
   mode: ObservableSnapshot<TranscriptViewMode>,
   collapseTiming: ObservableSnapshot<CollapseTiming>,
+  commandsOnlyProcessDetails?: ObservableSnapshot<boolean>,
 ): ObservableSnapshot<ChatPresentationPolicy> {
+  let cached: { base: ChatPresentationPolicy, value: ChatPresentationPolicy } | undefined
   return {
-    getSnapshot: () => presentationPolicyFor(mode.getSnapshot(), collapseTiming.getSnapshot()),
+    getSnapshot: () => {
+      const base = presentationPolicyFor(mode.getSnapshot(), collapseTiming.getSnapshot())
+      if (commandsOnlyProcessDetails?.getSnapshot() !== true) return base
+      if (cached?.base !== base) cached = { base, value: { ...base, commandsOnlyProcessDetails: true } }
+      return cached.value
+    },
     subscribe: (listener) => {
       const unsubscribeMode = mode.subscribe(listener)
       const unsubscribeTiming = collapseTiming.subscribe(listener)
-      return () => { unsubscribeMode(); unsubscribeTiming() }
+      const unsubscribeDetails = commandsOnlyProcessDetails?.subscribe(listener)
+      return () => { unsubscribeMode(); unsubscribeTiming(); unsubscribeDetails?.() }
     },
   }
 }

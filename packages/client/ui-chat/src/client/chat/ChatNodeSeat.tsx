@@ -69,6 +69,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
     }
   }, [actions, processSpec, alwaysOpen])
   const foldCompleted = usePresentation(policy => policy.foldCompletedTurns)
+  const commandsOnly = usePresentation(policy => policy.commandsOnlyProcessDetails === true)
   // A loaded end makes a partial historical Turn eligible without its start.
   const processWindowReady = processSpec !== undefined
     && processPresentation !== undefined
@@ -137,6 +138,8 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
     node, groupPart, cwd, openFile, inspectCall, forkAt,
     loadImage, fileMentions, turnProcess,
   ])
+  const processProseHidden = commandsOnly && processMember && !liveProcess && !processAnswer
+    && routedNode?.kind === 'assistant-step' && groupPart !== 'reasoning'
   if (routedNode === undefined || owner === null) return null
   // Runtime dispatch owns the correlation: every Node's discriminant is the
   // keyed-slot entry passed alongside that same Node. TypeScript does not
@@ -158,7 +161,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
       data-turn-process-hidden={processHidden || undefined}
       data-turn-process-answer={compactAnswer || undefined}
     >
-      {renderSlot('conversation.chat.node', routedOwner, {
+      {processProseHidden ? null : renderSlot('conversation.chat.node', routedOwner, {
         entryKey: routedNode.kind,
         hookContext,
         fallback: (

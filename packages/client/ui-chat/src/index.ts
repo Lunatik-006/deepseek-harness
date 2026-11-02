@@ -16,6 +16,8 @@ export {
 
 /** Runtime preferences projected to the browser. */
 export interface Config {
+  /** Render process details without reasoning bodies in every Chat detail mode. */
+  commandsOnlyProcessDetails: Volatile<boolean>
   /** Completed turn transcript presentation. */
   transcriptView: Volatile<ChatSettings['transcriptView']>
   /** When completed work details return to their historical presentation. */
@@ -28,6 +30,7 @@ export interface Config {
 
 /** Live preferences projected to the browser. */
 export const Config = z.object({
+  commandsOnlyProcessDetails: ChatSettingsFields.commandsOnlyProcessDetails.volatile(),
   [TRANSCRIPT_VIEW_FIELD]: ChatSettingsFields[TRANSCRIPT_VIEW_FIELD].volatile(),
   collapseTiming: ChatSettingsFields.collapseTiming.volatile(),
   performanceUsage: ChatSettingsFields['performanceUsage'].volatile(),

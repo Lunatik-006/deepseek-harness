@@ -165,7 +165,11 @@ export function apply(ctx: Context): void {
     }, LinkOpeningRow))
   })
   const transcriptView = new TranscriptViewPolicy(chatSettings, 'dshDesktop' in globalThis ? 'standard' : DEFAULT_TRANSCRIPT_VIEW_MODE)
-  const presentation = derivePresentationPolicy(transcriptView.mode, transcriptView.collapseTiming)
+  const processDetails: ObservableSnapshot<boolean> = {
+    getSnapshot: () => chatSettings.getSnapshot().value?.commandsOnlyProcessDetails === true,
+    subscribe: listener => chatSettings.subscribe(listener),
+  }
+  const presentation = derivePresentationPolicy(transcriptView.mode, transcriptView.collapseTiming, processDetails)
   const performancePolicy = new PerformanceUsagePolicy(chatSettings)
   ctx.effect(() => () => { transcriptView.dispose(); performancePolicy.dispose() })
   const performanceUsage = performancePolicy.mode

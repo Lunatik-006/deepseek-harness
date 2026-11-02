@@ -99,6 +99,7 @@ const ProcessGroupHeader = memo(function ProcessGroupHeader({ groupKey, useChatG
   readonly toggle: () => void
 }) {
   const data = useChatGroup(groupKey, group => group?.data)
+  const commandsOnly = usePresentation(policy => policy.commandsOnlyProcessDetails === true)
   const detailed = usePresentation(policy => data?.closed === false && policy.liveProcessDetail)
   const live = useStableLiveProcessTitle({
     activity: data?.summary.running ?? 'thinking',
@@ -109,7 +110,7 @@ const ProcessGroupHeader = memo(function ProcessGroupHeader({ groupKey, useChatG
   const label = data.closed ? processTitle(data.summary, t)
     : live.preparing ? t(`message.stepProcess.prepare.${live.activity === 'thinking' ? 'tools' : live.activity}`)
       : t(`message.stepProcess.${live.activity}`)
-  const detail = detailed && !data.closed ? live.detail : ''
+  const detail = detailed && !data.closed && (!commandsOnly || live.activity !== 'thinking') ? live.detail : ''
   const title = detail === '' ? label : `${label}${t('message.turnProcess.separator')}${detail}`
   const activity = data.closed ? data.summary.counts[0]?.kind ?? 'thinking' : live.activity
   return (

@@ -60,6 +60,8 @@ export const DEFAULT_LINK_OPENING: LinkOpening = 'sidebar'
 
 /** Durable Chat section shared by the Host schema and browser scope. */
 export interface ChatSettings {
+  /** Hide reasoning bodies in Chat process details; Session events remain unchanged. */
+  commandsOnlyProcessDetails?: boolean
   /** Work-details preference; absence uses the client default, and legacy saved values remain accepted. */
   transcriptView?: TranscriptViewMode | typeof LEGACY_TRANSCRIPT_VIEW_MODE | typeof LEGACY_EXPANDED_TRANSCRIPT_VIEW_MODE | null
   /** Independent collapse timing; absence preserves completion-time folding. */
@@ -72,6 +74,7 @@ export interface ChatSettings {
 
 /** Durable Chat schema; also the wire envelope the browser scope validates against. */
 export const ChatSettingsFields = {
+  commandsOnlyProcessDetails: z.boolean().default(false),
   [COLLAPSE_TIMING_FIELD]: z.union([...COLLAPSE_TIMINGS]).default(DEFAULT_COLLAPSE_TIMING),
   linkOpening: z.union(['sidebar', 'new-tab']).default(DEFAULT_LINK_OPENING),
   performanceUsage: z.union([...PERFORMANCE_USAGE_MODES]).default(DEFAULT_PERFORMANCE_USAGE),
