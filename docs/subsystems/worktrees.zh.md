@@ -12,6 +12,8 @@
 
 通过 `working_directory({ cd: path })` 离开时，会保留检出目录与分支。取消或失败也可能留下部分产物；错误会指出它们的位置。服务销毁时会中止待完成操作并等待它们结束。[包 README](../../packages/experimental/worktree/README.zh.md)拥有配置与 Git 要求。
 
+每个 profile 在所有隔离 preset 之上挂载一个 `@deepseek-ai/dsh-experimental-worktree/ownership`。该服务拥有一个原生 domain，并跨保留版本串行处理 Session 操作及 fresh fetch。detached 模式不创建分支，`branch` 为 null；`finish_worktree` 仅移除当前 Session 拥有的干净且没有活动工作或未发布提交的检出目录，保留分支。
+
 ## 请求与结果
 
 请求只选择新名称与本地版本。结果标识创建的检出目录与确切提交；它不会改变 Session 的原始项目或写权限。
@@ -23,6 +25,8 @@ interface CreateWorktreeRequest {
   name?: string
   /** Local revision to resolve before creation; omission selects HEAD. */
   from?: string
+  /** Create a detached checkout instead of a branch. Omission uses the deployment policy. */
+  detached?: boolean
 }
 ```
 
@@ -31,8 +35,8 @@ interface CreateWorktreeRequest {
 interface CreatedWorktree {
   /** Canonical absolute checkout directory in the filesystem provider's execution world. */
   path: string
-  /** Newly created branch name. */
-  branch: string
+  /** Newly created branch name, or null for a detached checkout. */
+  branch: string | null
   /** Resolved commit object name; repository-local replacement refs can change its checked-out content. */
   baseCommit: string
   /** Canonical root of the source checkout. */

@@ -12,6 +12,8 @@ The default destination is `<current checkout root>/.agents/worktrees/<name>`. `
 
 Leaving through `working_directory({ cd: path })` retains the checkout and branch. Cancellation or failure can also retain partial artifacts; the error identifies their location. The service aborts and drains pending operations on disposal. The [package README](../../packages/experimental/worktree/README.md) owns configuration and Git requirements.
 
+Each profile mounts one `@deepseek-ai/dsh-experimental-worktree/ownership` above isolated presets. It owns one native domain and serializes Session mutations and fresh fetches across retained revisions. Detached mode creates no branch and returns null; `finish_worktree` removes only the calling Session's owned clean checkout without running work or unpublished commits, and retains named branches.
+
 ## Request and result
 
 The request selects only the new name and local revision. The result identifies the created checkout and exact commit; it does not change the Session's original project or write permissions.
@@ -23,6 +25,8 @@ interface CreateWorktreeRequest {
   name?: string
   /** Local revision to resolve before creation; omission selects HEAD. */
   from?: string
+  /** Create a detached checkout instead of a branch. Omission uses the deployment policy. */
+  detached?: boolean
 }
 ```
 
@@ -31,8 +35,8 @@ interface CreateWorktreeRequest {
 interface CreatedWorktree {
   /** Canonical absolute checkout directory in the filesystem provider's execution world. */
   path: string
-  /** Newly created branch name. */
-  branch: string
+  /** Newly created branch name, or null for a detached checkout. */
+  branch: string | null
   /** Resolved commit object name; repository-local replacement refs can change its checked-out content. */
   baseCommit: string
   /** Canonical root of the source checkout. */

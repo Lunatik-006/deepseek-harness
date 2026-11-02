@@ -6,14 +6,16 @@ export interface CreateWorktreeRequest {
   name?: string
   /** Local revision to resolve before creation; omission selects HEAD. */
   from?: string
+  /** Create a detached checkout instead of a branch. Omission uses the deployment policy. */
+  detached?: boolean
 }
 
 /** Committed Git baseline and the calling Session's resulting working directory. */
 export interface CreatedWorktree {
   /** Canonical absolute checkout directory in the filesystem provider's execution world. */
   path: string
-  /** Newly created branch name. */
-  branch: string
+  /** Newly created branch name, or null for a detached checkout. */
+  branch: string | null
   /** Resolved commit object name; repository-local replacement refs can change its checked-out content. */
   baseCommit: string
   /** Canonical root of the source checkout. */

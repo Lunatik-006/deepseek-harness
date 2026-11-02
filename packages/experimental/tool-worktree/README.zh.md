@@ -1,5 +1,5 @@
 ---
-description: "创建新的本地 Git 工作树并改变当前 Session 目录的模型工具。"
+description: "创建并安全结束 Session 所有 Git 工作树的原生工具。"
 kind: "package-bundle"
 ---
 
@@ -7,90 +7,32 @@ kind: "package-bundle"
 
 [English](README.md) | 中文
 
-## 概述
-
-从 GUI 插件管理器添加 Git 工作树，让模型通过一次调用创建并进入新的 Git 工作树。此可选 bundle 随 Harness 安装，在选中之前保持关闭。原生工具调用与 PTC 程序获得相同的带类型结果，创建操作沿用现有文件策略。
-
-## 目录
-
-- [使用本包](#use-this-package)
-- [了解实现](#understand-the-implementation)
-- [深入探索](#further-exploration)
-- [模型体验](#model-experience)
-- [已知限制与待办工作](#known-limitations-and-deferred-work)
-- [开发备注](#dev-note)
-
------
-
-<a id="use-this-package"></a>
 ## 使用本包
 
-在 GUI 中打开**插件 → 官方 → Git 工作树**并启用开关。此 bundle 一起加载[工作树运行时](../worktree/README.zh.md)与本工具；所有随附 profile 默认关闭它。关闭后会移除 `create_worktree`，已有检出目录与分支会保留。内置 `working_directory` 工具仍然可用。
+可选 bundle 挂载一个 profile 级所有权服务、[工作树服务](../worktree/README.zh.md)及两个工具。将服务和工具移入隔离 preset 时，所有者必须保持全局挂载。关闭 bundle 会注销工具，并保留全部检出目录与所有权数据。
 
-在显式组合中，将此函数插件挂载到工作树运行时和工具注册表之后。
+`create_worktree({name?,from?,detached?,sandbox_permissions?,justification?})` 根据部署策略创建并进入拥有所有权的检出目录。结果包含 path、可为 null 的 branch、固定 baseCommit 与 repositoryRoot。from 不得覆盖强制 freshBase。
 
-```yaml
-- name: '@deepseek-ai/dsh-experimental-worktree'
-- name: '@deepseek-ai/dsh-experimental-tool-worktree'
-```
+`finish_worktree({sandbox_permissions?,justification?})` 安全结束当前 Session 的检出目录。状态为 none、removed 或 retained；保留时说明运行中的工作、脏文件、未发布的 detached 提交或异常注册。不强制删除，也不删除分支。
 
-调用 `create_worktree({ name?: string, from?: string })`。成功会返回规范化检出路径 `path`、新分支 `branch`、固定提交 `baseCommit` 和源仓库根目录 `repositoryRoot`，并改变调用 Session 的当前工作目录。离开时调用 `working_directory({ cd: path })`；检出目录与分支会保留。[生成的工具目录](../../../docs/tool-catalog.zh.md#deepseek-aidsh-experimental-tool-worktree)拥有准确的 schema 与面向模型的描述。
+两个工具均公开原生沙箱提权字段，并对选择的更宽模式请求实际审批。省略时保持 Session 原生策略。Host bootstrap 选项不批准后续 finish 操作。PTC 与普通工具调用方获得相同的带类型结果及原生通用展示。
 
------
-
-<a id="understand-the-implementation"></a>
-## 了解实现
-
-<details>
-<summary>实现细节——点击展开</summary>
-
-[`cordis.patch.yml`](cordis.patch.yml) 插入 `worktree` 运行时行与 `tool-worktree` 消费方行。[`src/index.ts`](src/index.ts) 注册一个带类型的工具。运行时创建操作拥有 Git 行为、取消处理与工作目录切换。工具将运行时记录作为规范返回值，并渲染为 JSON；Host 展示使用通用卡片。销毁插件会注销工具。
-
-本包不发布运行时不变量伴随入口，因为工具不保留独立于工作树运行时的状态。
-
-</details>
-
------
-
-<a id="further-exploration"></a>
-## 深入探索
-
-- [工作树运行时](../worktree/README.zh.md)——配置、创建语义与写权限。
-- [工作目录](../../session/working-directory/README.zh.md)——Session 上下文与离开操作。
-- [工具编写](../../../docs/cookbook/adding-a-tool.zh.md)——规范结果与纯展示函数。
-
------
-
-<a id="model-experience"></a>
 ## 模型体验
 
-### 创建工具
+### 工作树上下文
 
 #### 模型看到什么
 
-[工具目录](../../../docs/tool-catalog.zh.md#deepseek-aidsh-experimental-tool-worktree)定义 `create_worktree`。每个成功结果包含已创建检出目录的规范路径、分支、基准提交与源检出目录的顶层目录。失败调用报告操作错误。
+两个固定 schema 增加每次请求的工具文本。调用追加有界参数与规范 JSON 结果或错误。服务提供所有权上下文，工作目录服务记录成功的目录变更。
 
 #### Token 影响
 
-挂载期间，schema 为每次请求带来固定成本。每次调用将参数与有界创建结果或错误追加到普通工具历史。
+所有权上下文和固定工具 schema 增加每次请求的文本，调用追加有界结果或错误。
 
 #### KV Cache 影响
 
-未改变的工具 schema 保留既有前缀。调用追加到先前历史之后；工作目录服务另行记录成功的目录切换，供后续请求使用。
+未改变的所有权上下文保留前缀，成功的目录变更追加原生工作目录上下文。
 
 ## 已知限制与待办工作
 
-<a id="known-limitations-and-deferred-work"></a>
-
-- **必须有调用 Agent**——工具改变 Session 目录，没有 Agent 的调用会被拒绝。
-- **仅负责创建**——检查、合并、移除检出目录或删除分支不属于此工具；[运行时限制](../worktree/README.zh.md#known-limitations-and-deferred-work)同样适用。
-
-<a id="dev-note"></a>
-### 开发备注
-
-<details>
-<summary>维护者的工作上下文——点击展开</summary>
-
-无。
-
-</details>
+必须有调用 Agent，且它实际拥有保留的服务。合并、发布、依赖安装以及无关或损坏检出目录的恢复不属于这些工具。[服务文档](../worktree/README.zh.md)定义权限、Git 与清理要求。

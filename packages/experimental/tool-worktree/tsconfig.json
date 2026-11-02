@@ -19,6 +19,9 @@
     },
     {
       "path": "../worktree"
+    },
+    {
+      "path": "../../interaction/user-approval"
     }
   ]
 }
