@@ -13,6 +13,7 @@ import type {
   CancelOptions,
   InboxTarget,
   PreStepDecision,
+  PreparedStepDecision,
   RequestErrorAction,
 } from '@deepseek-ai/dsh-agent'
 import { agentEvents, assembleContextFor } from '@deepseek-ai/dsh-agent'
@@ -50,15 +51,6 @@ type Phase =
   | { kind: 'running'; abort: AbortController; turn: number; step: number; wakeRequested: boolean }
 
 type StepEndReason = Extract<TurnEndReason, { kind: 'completed' | 'max-tokens' }>
-
-type PreparedStep =
-  | { kind: 'reject' }
-  | {
-    kind: 'enter'
-    messages: UserMessage[]
-    startsRequestSeries?: true
-    assembly: PromptAssembly
-  }
 
 /** Remove adapter-derived values before plugins propose the next request config. */
 function requestProposal(header: EpochHeader): LlmCallConfig {
@@ -264,27 +256,34 @@ export class ReactLoopAgent implements Agent {
     }
   }
 
-  private async preStep(target: InboxTarget, position: { turn: number; step: number }): Promise<PreparedStep> {
+  private async preStep(target: InboxTarget, position: { turn: number; step: number }): Promise<PreparedStepDecision> {
     /* v8 ignore next -- private callers establish the running phase before proposing a step */
     if (this.phase.kind !== 'running') throw new Error(`agent "${this.id}": pre-step outside running phase`)
     const signal = this.phase.abort.signal
     const claimed = this.inbox.claim(target, position.turn)
-    const assembly = await this.loopCtx.systemPrompt.assemble(assembleContextFor(this, signal))
-    signal.throwIfAborted()
-    const decision = await this.dispatch.waterfall(
-      'agent/pre-step', { messages: claimed, ...position, signal },
-      (): Promise<PreStepDecision> => {
-        const sections = renderContextSections(assembly)
-        const context = this.runtimeContext.project(joinContextSections(sections), sections)
-        return Promise.resolve<PreStepDecision>({
-          kind: 'enter',
-          messages: context === undefined ? claimed : [...claimed, context],
-        })
+    const prepared = await this.dispatch.waterfall(
+      'agent/prepare-step', { messages: claimed, ...position, signal },
+      async (): Promise<PreparedStepDecision> => {
+        const assembly = await this.loopCtx.systemPrompt.assemble(assembleContextFor(this, signal))
+        signal.throwIfAborted()
+        const decision = await this.dispatch.waterfall(
+          'agent/pre-step', { messages: claimed, ...position, signal },
+          (): Promise<PreStepDecision> => {
+            const sections = renderContextSections(assembly)
+            const context = this.runtimeContext.project(joinContextSections(sections), sections)
+            return Promise.resolve<PreStepDecision>({
+              kind: 'enter',
+              messages: context === undefined ? claimed : [...claimed, context],
+            })
+          },
+        )
+        signal.throwIfAborted()
+        if (decision.kind === 'reject') return decision
+        return { ...decision, assembly }
       },
     )
     signal.throwIfAborted()
-    if (decision.kind === 'reject') return decision
-    return { ...decision, assembly }
+    return prepared
   }
 
   /** Whether the assembled tool schemas differ from the logged request header's. */
@@ -397,7 +396,7 @@ export class ReactLoopAgent implements Agent {
     return true
   }
 
-  private async step(decision: Extract<PreparedStep, { kind: 'enter' }>): Promise<StepEndReason | null> {
+  private async step(decision: Extract<PreparedStepDecision, { kind: 'enter' }>): Promise<StepEndReason | null> {
     /* v8 ignore next -- private callers establish the running phase before executing a step */
     if (this.phase.kind !== 'running') throw new Error(`agent "${this.id}": step outside running phase`)
     const { turn, step, abort: { signal } } = this.phase
