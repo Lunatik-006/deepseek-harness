@@ -41,8 +41,9 @@ export interface UiWorkspace {
   /**
    * Select a Session and show its Conversation as one UI navigation action.
    * @param target - known Session identity or durable direct-parent subagent address to display.
+   * @param options - preservePanel keeps the current panel; omission reveals the main Conversation.
    */
-  openSession(target: SessionTarget): void
+  openSession(target: SessionTarget, options?: { preservePanel?: boolean }): void
   /**
    * Connect a Workspace and open its Session unless a later navigation supersedes it.
    * @param workspaceId - target Workspace.
@@ -290,8 +291,8 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     }
   }
 
-  openSession(target: SessionTarget): void {
-    this.replaceMain(target, this.lifetime.signal, 'reveal')
+  openSession(target: SessionTarget, options: { preservePanel?: boolean } = {}): void {
+    this.replaceMain(target, this.lifetime.signal, options.preservePanel === true ? 'preserve' : 'reveal')
   }
 
   openWorkspace(
