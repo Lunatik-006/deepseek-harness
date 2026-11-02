@@ -14,7 +14,7 @@ import type { AgentCancelCause, Session, SessionSeq, UserMessage } from '@deepse
 export type { AgentCancelCause } from '@deepseek-ai/dsh-session'
 import type { Agent, InboxTarget } from './types.ts'
 export type { Agent } from './types.ts'
-import type {} from '@deepseek-ai/dsh-system-prompt'
+import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
 declare module '@deepseek-ai/dsh-system-prompt' {
   interface AssembleContext {
     /** Agent for this assembly; absent on diagnostics. When present, `scope` must identify the same agent. */
@@ -109,6 +109,15 @@ export interface Inbox {
 export type AgentStatus = 'idle' | 'running'
 
 /** Whether and with which messages the loop enters a proposed step. */
+export type PreparedStepDecision =
+  | { kind: 'reject' }
+  | {
+    kind: 'enter'
+    messages: UserMessage[]
+    startsRequestSeries?: true
+    assembly: PromptAssembly
+  }
+
 export type PreStepDecision =
   | { kind: 'reject' }
   | {
@@ -317,6 +326,12 @@ declare module '@deepseek-ai/cordis' {
      * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
      * @mode waterfall
      */
+    'agent/prepare-step'(
+      this: Scoped<Agent>,
+      payload: { agent: Agent; messages: UserMessage[]; turn: number; step: number; signal: AbortSignal },
+      next: () => Promise<PreparedStepDecision>,
+    ): Promise<PreparedStepDecision>
+
     'agent/pre-step'(this: Scoped<Agent>, payload: { agent: Agent; messages: UserMessage[]; turn: number; step: number; signal: AbortSignal }, next: () => Promise<PreStepDecision>): Promise<PreStepDecision>
     /**
      * Replace the frozen call configuration. `await next()` yields the config

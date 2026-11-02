@@ -1,3 +1,4 @@
+import type {} from '@deepseek-ai/dsh-api-remote-access'
 /** Reconnect-safe Workspace baseline and increment producer. */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -17,6 +18,7 @@ import type {
 
 /** The frames the feed produces: every follow frame except `replace`, which only access filtering sends. */
 type WorkspaceFeedFrame = Exclude<WorkspaceFollowFrame, { readonly type: 'replace' }>
+  | { readonly type: 'access' }
 
 /**
  * Project one authoritative Workspace entity into its Remote value.
@@ -62,6 +64,7 @@ export class WorkspaceFeed {
     this.archived = ctx.workspaceRegistry.archivedSessionIds.map(String)
     this.pinned = ctx.workspaceRegistry.pinnedSessionIds.map(String)
     ctx.on('domain/changed', (change: DomainChanged) => { this.changed(change) })
+    ctx.on('remote-access/invalidated', () => { this.publish({ type: 'access' }) })
     ctx.effect(() => () => {
       for (const follower of this.followers) follower.close()
       this.followers.clear()
