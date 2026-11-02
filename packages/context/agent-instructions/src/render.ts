@@ -4,7 +4,7 @@
  * @module @deepseek-ai/dsh-agent-instructions/render
  */
 
-import { basename, dirname, sep } from 'node:path'
+import { basename, dirname, sep } from './paths.ts'
 import {
   AGENTS_HOME_ENV,
   DEFAULT_AGENTS_HOME_DISPLAY,

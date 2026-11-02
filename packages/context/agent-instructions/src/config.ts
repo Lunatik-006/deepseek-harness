@@ -4,7 +4,7 @@
  * @module @deepseek-ai/dsh-agent-instructions/config
  */
 
-import { relative } from 'node:path'
+import { relative } from './paths.ts'
 import z from '@deepseek-ai/schemastery'
 import { resolveAgentsHome, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 

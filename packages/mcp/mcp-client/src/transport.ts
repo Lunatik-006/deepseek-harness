@@ -31,7 +31,7 @@ function buildChildEnv(extra: Record<string, string>): Record<string, string> {
  * @param config - Resolved plugin config discriminated on `transport`.
  * @returns A connected-ready MCP Transport (stdio or Streamable HTTP).
  */
-interface PlatformMcpBridge {createMcpTransport(agent:Agent,config:Config):Transport}
+interface PlatformMcpBridge {createMcpTransport(agent:Agent,config:Config):Transport|undefined}
 export function createTransport(config: Config,ctx?:Context): Transport {
   switch (config.transport) {
     case 'stdio': {
@@ -39,7 +39,8 @@ export function createTransport(config: Config,ctx?:Context): Transport {
       if(project&&ctx) {
         const agent=scopeOf(ctx) as Agent|undefined
         if(!agent?.session||ctx.get('agents')?.get(agent.id)!==agent)throw new Error('Project MCP stdio requires an exact Agent realm')
-        return project.createMcpTransport(agent,config)
+        const transport=project.createMcpTransport(agent,config)
+        if(transport)return transport
       }
       return new StdioClientTransport({
         command: config.command,
