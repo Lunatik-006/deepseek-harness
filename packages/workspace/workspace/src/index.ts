@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { ExecutionWorkspaceUnavailableError, platformExecutionWorkspaceDirectory } from './execution-directory.ts'
 import { mkdir, stat } from 'node:fs/promises'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
@@ -26,6 +27,8 @@ export type {
 export { workspaceDomainState, workspaceRecord, workspaceDomainSpec } from './spec.ts'
 export type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
 export { realpathNormalize } from './paths.ts'
+export { ExecutionWorkspaceUnavailableError, platformExecutionWorkspaceDirectory } from './execution-directory.ts'
+export type { ExecutionWorkspaceDirectory, ExecutionWorkspaceDirectoryBridge } from './execution-directory.ts'
 
 /** Identifies one workspace record (see `src/types.ts` for the brand rationale). */
 export type WorkspaceId = WorkspaceIdBrand
@@ -184,6 +187,8 @@ export class WorkspaceRegistry extends Service {
     table: () => this.requireTable(),
     candidateMatches: (id, path) => this.sessionPaths.get(id) === path || this.missingSessionPaths.has(id),
     readSessionHeader: id => this.readSessionHeader(id),
+    resolveDirectory: path => this.resolveDirectory(path),
+    directoryStatus: path => this.directoryStatus(path),
     rememberSessionPath: (id, path) => {
       this.sessionPaths.set(id, path)
       this.missingSessionPaths.delete(id)
@@ -219,9 +224,45 @@ export class WorkspaceRegistry extends Service {
     this.reportFilteredCandidates()
   }
 
+  private async resolveDirectory(path: string, requireDirectory = true): Promise<string> {
+    const remote = await platformExecutionWorkspaceDirectory(this.ctx, path)
+    if (remote !== undefined) {
+      if (remote.status !== 'ok') throw new ExecutionWorkspaceUnavailableError(remote.path, remote)
+      return remote.path
+    }
+    const canonical = await realpathNormalize(path)
+    if (requireDirectory && !(await stat(canonical)).isDirectory()) throw new Error('Workspace path is not a directory')
+    return canonical
+  }
+
+  private async directoryStatus(path: string): Promise<'ok' | 'missing-dir'> {
+    const remote = await platformExecutionWorkspaceDirectory(this.ctx, path)
+    return remote === undefined ? ((await stat(path)).isDirectory() ? 'ok' : 'missing-dir') : remote.status
+  }
+
+  private async ensureDirectory(path: string): Promise<string> {
+    const remote = await platformExecutionWorkspaceDirectory(this.ctx, path)
+    if (remote !== undefined) {
+      if (remote.status !== 'ok') throw new ExecutionWorkspaceUnavailableError(remote.path, remote)
+      return remote.path
+    }
+    if (!fullyQualifiedWorkspacePath(path)) throw new TypeError('Workspace path is not fully qualified')
+    await mkdir(path, { recursive: true })
+    return await realpathNormalize(path)
+  }
+
+  /** Re-index directory availability after the configured providers become ready. */
+  async refreshExecutionDirectories(): Promise<void> {
+    return await this.enqueueOperation(async () => {
+      await this.replaceHeaderIndex(await this.listStoredHeaders())
+      await this.indexLiveSessions()
+      this.reportFilteredCandidates()
+    })
+  }
+
   /**
    * Create or reuse a workspace for an existing directory. The fully qualified
-   * path is canonicalized through `fs.realpath`; a relative, nonexistent, or
+   * path is canonicalized through the configured execution bridge or native `fs.realpath`; a relative, nonexistent, or
    * non-directory path rejects. Repeated calls for the same canonical path
    * return the existing entity without changing its title.
    * A newly created workspace is prepended to the durable registry order.
@@ -236,10 +277,7 @@ export class WorkspaceRegistry extends Service {
   // drop the parameter with its @param clause and the `create(path, title?)`
   // lines in this package's README pair.
   async create(path: string, title?: string): Promise<Workspace> {
-    const canonical = await realpathNormalize(path)
-    if (!(await stat(canonical)).isDirectory()) {
-      throw new Error(`cannot create a workspace at '${canonical}': path is not a directory`)
-    }
+    const canonical = await this.resolveDirectory(path)
     return await this.enqueueOperation(() => this.createCanonical(canonical, title))
   }
 
@@ -265,9 +303,7 @@ export class WorkspaceRegistry extends Service {
         || sessions.list().length > 0 || (await this.listStoredHeaders()).length > 0) return undefined
 
       const path = await resolveDirectory()
-      if (!fullyQualifiedWorkspacePath(path)) throw new TypeError(`Workspace path is not fully qualified: '${path}'`)
-      await mkdir(path, { recursive: true })
-      const canonical = await realpathNormalize(path)
+      const canonical = await this.ensureDirectory(path)
       // A Session can start outside the registry queue while directory preparation awaits I/O.
       if ((await this.listStoredHeaders()).length > 0 || sessions.list().length > 0) return undefined
       return this.createCanonical(canonical, defaultWorkspaceTitle(path), true)
@@ -500,7 +536,7 @@ export class WorkspaceRegistry extends Service {
    * @returns the workspace owning the canonical path, when one exists.
    */
   async resolveByPath(path: string): Promise<Workspace | undefined> {
-    const canonical = await realpathNormalize(path)
+    const canonical = await this.resolveDirectory(path, false)
     for (const entity of this.entities.values()) {
       if (entity.path === canonical) return entity
     }
@@ -813,14 +849,15 @@ export class WorkspaceRegistry extends Service {
       return
     }
     try {
-      const path = await realpathNormalize(header.cwd)
-      if (!(await stat(path)).isDirectory()) {
-        this.invalidSessionPaths.set(header.id, `cwd '${header.cwd}' is not a directory`)
-        return
-      }
+      const path = await this.resolveDirectory(header.cwd)
       this.sessionPaths.set(header.id, path)
       this.invalidSessionPaths.delete(header.id)
     } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'EXECUTION_WORKSPACE_UNAVAILABLE') {
+        this.missingSessionPaths.add(header.id)
+        this.invalidSessionPaths.delete(header.id)
+        return
+      }
       if (fullyQualifiedWorkspacePath(header.cwd)
         && error instanceof Error && 'code' in error && error.code === 'ENOENT') {
         this.missingSessionPaths.add(header.id)
