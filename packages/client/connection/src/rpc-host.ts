@@ -456,7 +456,11 @@ export class HostConnectionService extends Service implements HostConnectionHand
       },
     }
     return owner.effect(
-      () => owner.webServer.register(route),
+      () => {
+        const server = owner.get('webServer')
+        if (!server) throw new Error('client-connection: RPC channel requires an active Web carrier')
+        return server.register(route)
+      },
       `client-connection: ${channel} rpc channel`,
     )
   }
