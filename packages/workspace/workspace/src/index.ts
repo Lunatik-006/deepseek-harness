@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { platformExecutionWorkspaceDirectory } from './execution-directory.ts'
+import { ExecutionWorkspaceUnavailableError, platformExecutionWorkspaceDirectory } from './execution-directory.ts'
 import { mkdir, stat } from 'node:fs/promises'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
@@ -27,7 +27,7 @@ export type {
 export { workspaceDomainState, workspaceRecord, workspaceDomainSpec } from './spec.ts'
 export type { WorkspaceDomainState, WorkspaceRecord } from './spec.ts'
 export { realpathNormalize } from './paths.ts'
-export { platformExecutionWorkspaceDirectory } from './execution-directory.ts'
+export { ExecutionWorkspaceUnavailableError, platformExecutionWorkspaceDirectory } from './execution-directory.ts'
 export type { ExecutionWorkspaceDirectory, ExecutionWorkspaceDirectoryBridge } from './execution-directory.ts'
 
 /** Identifies one workspace record (see `src/types.ts` for the brand rationale). */
@@ -227,7 +227,7 @@ export class WorkspaceRegistry extends Service {
   private async resolveDirectory(path: string, requireDirectory = true): Promise<string> {
     const remote = await platformExecutionWorkspaceDirectory(this.ctx, path)
     if (remote !== undefined) {
-      if (remote.status !== 'ok') throw new Error('Configured execution workspace is unavailable')
+      if (remote.status !== 'ok') throw new ExecutionWorkspaceUnavailableError(remote.path, remote)
       return remote.path
     }
     const canonical = await realpathNormalize(path)
@@ -243,7 +243,7 @@ export class WorkspaceRegistry extends Service {
   private async ensureDirectory(path: string): Promise<string> {
     const remote = await platformExecutionWorkspaceDirectory(this.ctx, path)
     if (remote !== undefined) {
-      if (remote.status !== 'ok') throw new Error('Configured execution workspace is unavailable')
+      if (remote.status !== 'ok') throw new ExecutionWorkspaceUnavailableError(remote.path, remote)
       return remote.path
     }
     if (!fullyQualifiedWorkspacePath(path)) throw new TypeError('Workspace path is not fully qualified')
@@ -853,6 +853,11 @@ export class WorkspaceRegistry extends Service {
       this.sessionPaths.set(header.id, path)
       this.invalidSessionPaths.delete(header.id)
     } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'EXECUTION_WORKSPACE_UNAVAILABLE') {
+        this.missingSessionPaths.add(header.id)
+        this.invalidSessionPaths.delete(header.id)
+        return
+      }
       if (fullyQualifiedWorkspacePath(header.cwd)
         && error instanceof Error && 'code' in error && error.code === 'ENOENT') {
         this.missingSessionPaths.add(header.id)

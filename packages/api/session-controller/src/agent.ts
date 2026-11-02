@@ -2,7 +2,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
-import { platformExecutionWorkspaceDirectory } from '@deepseek-ai/dsh-workspace'
+import { ExecutionWorkspaceUnavailableError, platformExecutionWorkspaceDirectory } from '@deepseek-ai/dsh-workspace'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type {
@@ -566,7 +566,7 @@ export class ApiSessionAgentController {
       const remote = await platformExecutionWorkspaceDirectory(this.ctx, cwd)
       if (remote === undefined) await mkdir(cwd, { recursive: true })
       else {
-        if (remote.status !== 'ok') throw new Error('Configured execution workspace is unavailable')
+        if (remote.status !== 'ok') throw new ExecutionWorkspaceUnavailableError(remote.path, remote)
         cwd = remote.path
       }
     } catch (error: unknown) {

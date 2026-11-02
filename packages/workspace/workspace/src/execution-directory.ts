@@ -8,6 +8,16 @@ export interface ExecutionWorkspaceDirectory {
   readonly status: 'ok' | 'missing-dir'
 }
 
+/** A configured root cannot currently be verified; ownership is still retained. */
+export class ExecutionWorkspaceUnavailableError extends Error {
+  readonly code = 'EXECUTION_WORKSPACE_UNAVAILABLE'
+  /** @param path - configured root. @param cause - original provider failure or availability result. */
+  constructor(path: string, cause?: unknown) {
+    super('Configured execution workspace is unavailable: ' + path, { cause })
+    this.name = 'ExecutionWorkspaceUnavailableError'
+  }
+}
+
 /** Optional platform service; undefined means that the path is unmanaged. */
 export interface ExecutionWorkspaceDirectoryBridge {
   resolveWorkspaceDirectory(path: string): Promise<ExecutionWorkspaceDirectory | undefined>
@@ -28,7 +38,9 @@ declare module '@deepseek-ai/cordis' {
 export async function platformExecutionWorkspaceDirectory(ctx: Context, path: string): Promise<ExecutionWorkspaceDirectory | undefined> {
   const execution = ctx.get('platformExecution')
   if (typeof execution?.resolveWorkspaceDirectory !== 'function') return undefined
-  const result = await execution.resolveWorkspaceDirectory(path)
+  let result: ExecutionWorkspaceDirectory | undefined
+  try { result = await execution.resolveWorkspaceDirectory(path) }
+  catch (cause) { throw new ExecutionWorkspaceUnavailableError(path, cause) }
   if (result === undefined) return undefined
   if (!result || typeof result.path !== 'string') throw new Error('Invalid configured execution workspace resolution')
   const api = result.path.startsWith('/') ? posix : win32
