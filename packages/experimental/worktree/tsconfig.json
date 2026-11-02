@@ -37,6 +37,21 @@
     },
     {
       "path": "../../util/timeout"
+    },
+    {
+      "path": "../../core/system-prompt"
+    },
+    {
+      "path": "../../storage/storage-domain"
+    },
+    {
+      "path": "../../preset/agent-preset-registry"
+    },
+    {
+      "path": "../../workspace/workspace"
+    },
+    {
+      "path": "../../llm/llm"
     }
   ]
 }

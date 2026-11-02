@@ -1,5 +1,5 @@
 ---
-description: "按照调用 Session 的文件策略创建并进入保留的 Git 工作树。"
+description: "创建、记录所有权并安全结束保留的 Git 工作树。"
 kind: "package-reference"
 ---
 
@@ -9,90 +9,48 @@ kind: "package-reference"
 
 ## 概述
 
-从本地提交创建隔离的检出目录，并在其中继续同一个 Session。每次操作创建新的具名分支，源检出目录保持不变。所有写入均受现有沙箱约束。离开检出目录会保留文件与分支。
+创建具名分支或 detached 任务检出目录，同时保留 Session 的原始项目。所有权持久化；结束任务时保留脏文件、运行中的任务、子 Agent 与尚未发布的 detached 提交。
 
-## 目录
-
-- [使用本包](#use-this-package)
-- [了解实现](#understand-the-implementation)
-- [深入探索](#further-exploration)
-- [模型体验](#model-experience)
-- [已知限制与待办工作](#known-limitations-and-deferred-work)
-- [开发备注](#dev-note)
-
------
-
-<a id="use-this-package"></a>
 ## 使用本包
 
-将服务与 `workingDirectory`、`fs`、`subprocess`、`sandbox` 和 `sandboxPolicy` 提供方一起挂载。模型需要此操作时，再添加工具包。
+在所有保留的 preset 树之上，仅挂载一个 profile 级所有权服务。工作树服务与所属执行环境的 filesystem、subprocess、sandbox、sandboxPolicy、workingDirectory 和 systemPrompt 提供方一起挂载。可选工具 bundle 为普通非隔离用法挂载根所有权服务。
 
 ```yaml
+- name: '@deepseek-ai/dsh-experimental-worktree/ownership'
 - name: '@deepseek-ai/dsh-experimental-worktree'
 - name: '@deepseek-ai/dsh-experimental-tool-worktree'
 ```
 
-`ctx.worktrees.create(agent, { name?, from? }, signal?)` 创建新分支与检出目录，再通过 `ctx.workingDirectory.set` 进入规范化的检出目录。`from` 在创建前解析为本地提交，默认是 `HEAD`；暂存、未暂存、未跟踪以及被忽略的源文件均不复制。`baseCommit` 报告解析出的提交对象名称；仓库本地的替换引用仍作用于检出的内容。检出操作禁用已配置的 Git clean、smudge 和 process 过滤器，不修改仓库配置。分支或检出路径已存在时会报错。返回记录包含 `path`、`branch`、`baseCommit` 和 `repositoryRoot`。
+所有权服务仅打开一个原生 storage domain。各 preset 服务注入该所有者，不得自行打开另一个句柄或创建另一所有者。单个 preset 版本销毁后，所有权、每 Session 操作队列及 fresh-fetch 队列仍然存在。profile 销毁时先中止并等待操作结束，再关闭 domain。
 
-默认检出目录是 `<current checkout root>/.agents/worktrees/<name>`。返回的 `repositoryRoot` 是调用方当前检出目录的顶层目录；如果它是链接检出目录，工作树父目录就嵌套在其中。省略名称时，使用 `worktree-` 加 UUID。仅当服务的分配操作创建了父目录时，服务才会写入内容为 `*` 加换行符的 `.gitignore`；已有文件与忽略规则保持不变。相对路径 `directory`、生成名称使用的 `namePrefix`、可执行程序与进程限制可在[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-worktree)中查阅。
+`create(agent,{name?,from?,detached?},signal?,policy?)` 在成功后进入新检出目录。detached 模式的 branch 为 null，且不创建具名分支。名称选择未占用的池路径。未配置 freshBase 时，from 默认为 HEAD；配置后必须成功获取指定远端分支再分配目录，from 不得覆盖该策略。获取与固定提交按执行器及 Git common directory 的规范文件系统标识串行执行。
 
------
+`newSession:true` 要求 freshBase。空的顶层 Session 立即可用；前置首步操作在项目指令之前为 Git 项目准备目录。非 Git 目录不变。恢复已有所有权时进入记录的检出目录，不再次分配。原始 Session header 保持不变。`presetScoped:true` 要求生命周期处理及公开 create/finish 使用调用 Agent 实际保留的 worktrees 服务。
 
-<a id="understand-the-implementation"></a>
-## 了解实现
+默认池为 .agents/worktrees；部署可配置其他相对目录及 detached 默认值。自动初始化仅补充缺失的池 .gitignore，不覆盖已有内容，并拒绝未忽略目标检出目录的池。Git hooks 与 filters 正常运行。可配置可执行程序、时限、输出上限及结束宽限期。
 
-<details>
-<summary>实现细节——点击展开</summary>
+## 权限与清理
 
-Git 与目录分配通过挂载的子进程及沙箱提供方执行，沿用调用 Session 的文件策略。创建操作不会扩大目标目录或共享 Git 管理目录的写权限。目录创建独占申请目标路径；取消或初始化失败可能留下已有产物，错误会包含其路径。服务销毁会中止待完成操作，并等待它们结束。
+普通 create 与 finish 保持 Session 原生沙箱策略。工具消费方可通过原生审批请求更宽模式。`bootstrapSandbox:host` 仅明确放行自动首提示准备；此时仓库 hooks 与凭证 helper 拥有 Host 权限。后续工具与 finish 不继承此选项。
 
-| 源码 | 职责 |
-|---|---|
-| [`src/index.ts`](src/index.ts) | 解析源提交、创建检出目录并发布新的工作目录 |
-| [`src/process.ts`](src/process.ts) | 约束字面参数、限制输出并等待进程终止 |
-| [`src/directory.ts`](src/directory.ts) | 申请目标目录并初始化新建工作树父目录的忽略文件 |
+`finish(agent,signal?,policy?)` 只移除当前 Session 拥有的干净、已注册工作树，且不使用 force。运行中的 job 或子 Agent、脏文件、未跟踪文件、异常注册以及没有保留分支或远端引用的 detached 提交都会保留目录与所有权。成功清理后返回源项目并释放所有权，具名分支仍保留。初始化失败可留下部分文件或 Git 产物，错误中会注明位置。
 
-本包不发布运行时不变量伴随入口：Git 拥有工作树注册信息，工作目录服务拥有 Session 目录；本包不保留二者的独立投影。
-
-</details>
-
------
-
-<a id="further-exploration"></a>
-## 深入探索
-
-- [工作树子系统](../../../docs/subsystems/worktrees.zh.md)——请求、结果与服务参考。
-- [工作目录](../../session/working-directory/README.zh.md) — 记录的 Session 目录与目录切换。
-- [工作树工具](../tool-worktree/README.zh.md) — 面向模型的创建操作。
-- [子进程](../../subprocess/subprocess/README.zh.md) — 进程所有权与执行环境。
-- [创建决策](../../../.agents/notes/implemented/feature/2026-09-13-explicit-worktree-creation.zh.md) — 保留检出目录与既有写权限。
-
------
-
-<a id="model-experience"></a>
 ## 模型体验
 
-通过工作树工具的创建结果与工作目录服务记录的 Session 上下文间接影响模型。
+### 工作树上下文
+
+#### 模型看到什么
+
+工具结果记录准确路径、可为 null 的分支与基准提交。稳定的系统上下文说明工作树所有权和清理要求；成功的目录变更使用原生 Session 事件。这些内容增加有界的提示与结果文本；未改变的上下文保留其前缀。
+
+#### Token 影响
+
+所有权上下文和固定工具 schema 增加每次请求的文本，调用追加有界结果或错误。
 
 #### KV Cache 影响
 
-本包不贡献提示文本。其消费方负责追加工具结果与记录的目录上下文。
+未改变的所有权上下文保留前缀，成功的目录变更追加原生工作目录上下文。
 
 ## 已知限制与待办工作
 
-<a id="known-limitations-and-deferred-work"></a>
-
-- **保留产物**——离开工作树会保留其分支和文件。初始化失败也可能留下部分产物；移除、清理注册信息与删除分支由用户或其他消费方负责。
-- **仅限本地提交**——创建操作不会获取远端提交或部分克隆中缺失的对象、初始化子模块、安装依赖或复制未提交文件。Git 满足执行要求时，本地对象缺失会导致创建失败。
-- **过滤器处理前的内容**——检出时跳过已配置的过滤器，以避免执行仓库配置的程序或隐式下载。Git LFS 指针与加密 blob 保持存储时的形式；拉取实体内容或解密由用户另行执行。
-- **执行要求**——子进程提供方必须在与文件系统提供方相同的执行环境中提供 Git 与 Node。Git 必须识别 `GIT_NO_LAZY_FETCH`：Git 2.45 及 2.39.4、2.40.2、2.41.1、2.42.2、2.43.4、2.44.1 维护版本均支持；更早的版本会忽略该变量并继续执行而不报错，因此创建操作可能从 promisor 远程获取缺失的部分克隆对象。`git --no-lazy-fetch` 选项会拒绝这些版本，但它仅在 Git 2.45 及以后存在，也会拒绝上述已修补的维护版本。现有沙箱必须允许写入检出目录与共享 Git 元数据。
-
-<a id="dev-note"></a>
-### 开发备注
-
-<details>
-<summary>维护者的工作上下文——点击展开</summary>
-
-沙箱内的 Node 子进程提供[文件系统服务](../../fs/fs/src/index.ts)未公开的独占目录创建能力，并确定父目录是否由本服务创建。文件系统契约允许 [fs-local](../../fs/fs-local/src/index.ts) 等普通提供方在写入时忽略 `sandboxPolicy`；`createIfAbsent` 保护文件，但既不执行权限约束，也不确定目录由谁创建。将目录分配和忽略文件创建放在与 Git 相同的进程沙箱内，可保留对已有检出路径的拒绝行为，并落实创建 `.gitignore` 的条件。
-
-</details>
+执行环境必须在同一文件系统中提供 Git 与 Node，Git 必须识别 GIT_NO_LAZY_FETCH。本服务不安装项目依赖、不初始化子模块、不复制源修改、不合并变更、不发布提交。原生沙箱已说明的执行限制仍适用。记录的工作树缺失时明确报错；清理不会强制恢复或删除其他路径。

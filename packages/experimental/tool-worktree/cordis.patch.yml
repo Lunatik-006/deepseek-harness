@@ -1,4 +1,6 @@
 - insert:
+    - id: worktree-ownership
+      name: '@deepseek-ai/dsh-experimental-worktree/ownership'
     - id: worktree
       name: '@deepseek-ai/dsh-experimental-worktree'
     - id: tool-worktree
