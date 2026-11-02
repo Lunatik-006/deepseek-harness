@@ -12,7 +12,7 @@
  * @module @deepseek-ai/dsh-host-frontend-static
  */
 
-import type { ServerResponse } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -114,8 +114,14 @@ export function apply(ctx: Context, config: Config): void {
   const distIndex = config.distIndex
   const distRoot = dirname(distIndex)
   // Insert after all index transforms so the base precedes every resource reference.
-  const renderIndex = async (): Promise<string> => {
-    const body = ctx.webServer.renderIndex(await readFile(distIndex, 'utf8'))
+  const renderIndex = async (request: IncomingMessage, response: ServerResponse): Promise<string> => {
+    let body = ctx.webServer.renderIndex(await readFile(distIndex, 'utf8'))
+    const globals = await ctx.connection.indexInjections(request)
+    if (globals !== undefined) {
+      const payload = JSON.stringify(globals).replace(/</g, '\\u003c')
+      body = body.replace(/<\/head>/i, `<script>for(const row of ${payload})globalThis[row.name]=row.value;</script></head>`)
+      response.setHeader('cache-control', 'no-store')
+    }
     return body.replace(/<head(?:\s[^>]*)?>/i, open => `${open}<base href="./">`)
   }
   ctx.effect(() => ctx.webServer.registerFallback(async (req, res) => {
@@ -134,7 +140,7 @@ export function apply(ctx: Context, config: Config): void {
       distRoot,
       distIndex,
       () => ctx.connection.authorizeIndex(req, res),
-      renderIndex,
+      () => renderIndex(req, res),
     )
   }), 'frontend-static: fallback seat')
 }

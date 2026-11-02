@@ -279,6 +279,24 @@ export class HostConnectionService extends Service implements HostConnectionHand
     return this.desktopLocalOwner?.provider.bootstrap?.()
   }
 
+  /** Derive actor globals for the actual authenticated HTTP carrier. */
+  async indexInjections(request: ConnectionTrustRequest): Promise<readonly NativeDesktopBootInjection[] | undefined> {
+    if (this.verifyDesktopLocalOwner(request)) {
+      const globals = await this.desktopBootstrap(request)
+      if (!globals) throw new Error('Native Desktop actor bootstrap is required')
+      return globals
+    }
+    if (this.browserAdmission) {
+      const admission = this.admit(request)
+      if ('rejection' in admission) throw new Error('Authenticated index Peer is required')
+      const globals = await this.browserAdmission.bootstrap?.(request, admission.peer)
+      if (!globals) throw new Error('Authenticated index bootstrap is required')
+      return globals
+    }
+    if (this.browserAdmissionRequired || this.desktopLocalOwnerRequired) throw new Error('Index admission is unavailable')
+    return undefined
+  }
+
   /** Create one in-process Peer owned by the Context that read this service. */
   createPeer(options: { readonly principal: Principal; readonly interactions?: ConnectionInteractions }): PeerScope {
     return new Peer(this.ctx, options)
