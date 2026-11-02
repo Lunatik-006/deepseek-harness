@@ -1,7 +1,7 @@
 /** Generic unary RPC contracts shared by the Host and Client Connection halves. */
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
-import type { PeerScope, Principal } from '@deepseek-ai/dsh-typert-protocol'
+import type { PeerId, PeerScope, Principal } from '@deepseek-ai/dsh-typert-protocol'
 
 /** Correlation id minted by a caller and echoed by the Connection response. */
 export type RpcId = Branded<'rpc-id'>
@@ -96,6 +96,8 @@ export type RpcMessage = ClientRequest | ServerResponse
 
 /** HTTP request facts consumed by browser trust and authentication. */
 export interface ConnectionTrustRequest {
+  /** Physical carrier supplies this; HTTP headers do not supply socket facts. */
+  readonly socket?: NativeLoopbackSocketFacts
   /** Request headers supplied by either the Fetch or node:http representation. */
   readonly headers: Headers | Readonly<Record<string, string | readonly string[] | undefined>>
 }
@@ -162,7 +164,7 @@ export interface ConnectionFetchRoute {
    * authentication policy. Only owner Peers reach an exact route; the shared
    * handler answers 403 for every other principal.
    */
-  readonly fetch: (request: Request) => Promise<Response>
+  readonly fetch: (request: Request, peer: PeerScope) => Promise<Response>
 }
 
 /** Host registry for exact Fetch routes that cannot use JSON Remote invocation. */
@@ -203,7 +205,9 @@ export interface HostConnectionRpc {
 }
 
 /** Host `ctx.connection` members consumed by transport-independent adapters. */
-export interface HostConnectionHandle {
+export interface HostConnectionHandle extends NativeDesktopLocalAdmission {
+  /** Register the deployment's sole authenticated browser admission provider. */
+  registerBrowserAdmission(provider: ConnectionBrowserAdmission): () => void
   /** Generic RPC channel registry. */
   readonly rpc: HostConnectionRpc
   /** Exact Fetch routes for streaming or browser-native responses. */
@@ -325,4 +329,71 @@ export interface ClientConnectionRpc {
     signal: AbortSignal,
     uplink?: AsyncIterable<unknown>,
   ) => AsyncIterable<unknown>
+}
+
+export interface NativeLoopbackSocketFacts {
+  readonly remoteAddress?: string | undefined;
+  readonly remotePort?: number | undefined;
+  readonly localAddress?: string | undefined;
+  readonly localPort?: number | undefined;
+}
+export interface NativeDesktopTrustRequest extends ConnectionTrustRequest {
+  /** node:http supplies this; no JSON or HTTP header supplies socket facts. */
+  readonly socket?: NativeLoopbackSocketFacts;
+}
+export interface NativeApiCredentialSeed {
+  readonly authority: string;
+  readonly expiresAt: number;
+}
+export interface NativeActorApiCredential {
+  readonly cookie: string;
+  readonly setCookie: string;
+  readonly expiresAt: number;
+}
+export interface NativeRegisteredActorCredential {
+  readonly peer: PeerScope;
+  readonly cookie: string;
+  readonly expiresAt: number;
+  readonly sharedBrowser: boolean;
+}
+export type NativeDesktopOwnerProof = NativeApiCredentialSeed & {
+  readonly kind: 'browser' | 'api';
+  readonly loginId: string;
+  readonly peerId?: PeerId;
+};
+export interface NativeDesktopLocalOwnerProvider {
+  /** Trusted server installation chooses the mapped principal, never the request. */
+  principal(): Principal;
+  accepts(principal: Principal): boolean;
+  createApiPeer(request: NativeApiCredentialSeed & { readonly interactions: 'answer' | 'none' }): PeerScope;
+  /** Server-owned actor globals, ready before the native renderer starts. */
+  bootstrap?(): Promise<readonly NativeDesktopBootInjection[]> | readonly NativeDesktopBootInjection[];
+}
+/** One ordinary global boot contribution; authentication data never goes here. */
+export interface NativeDesktopBootInjection {
+  readonly kind: 'global';
+  readonly name: string;
+  readonly value: unknown;
+}
+export interface NativeDesktopLocalAdmission {
+  registerDesktopLocalOwner(provider: NativeDesktopLocalOwnerProvider): () => void;
+  verifyDesktopLocalOwner(request: NativeDesktopTrustRequest): NativeDesktopOwnerProof | undefined;
+  /** Server-private issuer/validator, intentionally not Remote endpoints. */
+  createActorApiCredential(peer: PeerScope): NativeActorApiCredential;
+  verifyRegisteredActorCredential(request: ConnectionTrustRequest): NativeRegisteredActorCredential | undefined;
+  /** Private native carrier route; absent or invalid proof has no projection. */
+  desktopBootstrap(request: ConnectionTrustRequest): Promise<readonly NativeDesktopBootInjection[] | undefined>;
+}
+
+
+/** One optional server-owned authentication provider; withdrawal never restores owner admission. */
+export interface ConnectionBrowserAdmission {
+  admit(request: ConnectionTrustRequest): PeerAdmission
+  authorizeIndex(request: ConnectionIndexRequest, response: ConnectionIndexResponse): boolean
+  /** Accept only the exact live Peer instances owned by this provider. */
+  acceptsPeer?(peer: PeerScope): boolean
+  /** Authorize an additional RPC channel before decoding its request body. */
+  authorizeChannel?(peer: PeerScope, channel: string): boolean
+  /** Authorize one native exact Fetch route by its actual request and resource. */
+  authorizeFetch?(request: Request, peer: PeerScope): Promise<boolean> | boolean
 }
