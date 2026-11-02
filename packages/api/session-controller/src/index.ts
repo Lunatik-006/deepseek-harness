@@ -303,13 +303,16 @@ export class SessionController extends TypertRemoteService {
   }
 
   /**
-   * Select one Session-local model after explicitly resuming the Session; save the default in the background.
+   * Select one Session-local model; platform-human callers do not change the Host default.
    * @param request - Session identity and requested model selection.
    * @returns the normalized selection installed for the Session, without waiting for default persistence.
    */
   @Remote('selectModel')
   selectModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue> {
-    return this.commands.selectModel(request)
+    // Capture the verified caller before entering the Host-owned commands object.
+    const principal = this.ctx.invocation?.peer?.principal
+    const kind: string | undefined = principal?.kind
+    return this.commands.selectModel(request, { persistDefault: kind !== 'platform-human' })
   }
 
   /**
