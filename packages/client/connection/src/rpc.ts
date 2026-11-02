@@ -368,6 +368,7 @@ export interface NativeDesktopLocalOwnerProvider {
   /** Trusted server installation chooses the mapped principal, never the request. */
   principal(): Principal;
   accepts(principal: Principal): boolean;
+  acceptsPeer(peer: PeerScope): boolean;
   createApiPeer(request: NativeApiCredentialSeed & { readonly interactions: 'answer' | 'none' }): PeerScope;
   /** Server-owned actor globals, ready before the native renderer starts. */
   bootstrap?(): Promise<readonly NativeDesktopBootInjection[]> | readonly NativeDesktopBootInjection[];

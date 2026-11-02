@@ -40,7 +40,7 @@ import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-ll
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { canonicalClientTimeZone } from '@deepseek-ai/dsh-util-time'
-import { Remote, RemoteError, TypertRemoteService, principalOf, type Principal } from '@deepseek-ai/dsh-typert-protocol'
+import { Remote, RemoteError, TypertRemoteService, actorPrincipalOf, type Principal } from '@deepseek-ai/dsh-typert-protocol'
 import {
   rejectPrompt, validateControlRequest,
 } from './control.ts'
@@ -468,7 +468,7 @@ export class SubagentRuntime extends TypertRemoteService {
         { parentSessionId },
       )
     }
-    const principal = principalOf(this.ctx.invocation)
+    const principal = actorPrincipalOf(this.ctx.invocation)
     const source: BrowserPromptSource = {
       kind: 'user',
       rpcId: request.requestId,

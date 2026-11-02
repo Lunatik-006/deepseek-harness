@@ -190,7 +190,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
     if (process.platform !== "win32" || this.desktopLocalOwner) throw new Error("Desktop local admission is unavailable or already registered");
     const secret = this.desktopLocalSecret;
     if (typeof secret !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(secret)) throw new Error("Desktop main transport proof is missing");
-    if (!provider || typeof provider.principal !== "function" || typeof provider.accepts !== "function" || typeof provider.createApiPeer !== "function") throw new Error("Invalid Desktop local admission provider");
+    if (!provider || typeof provider.principal !== "function" || typeof provider.accepts !== "function" || typeof provider.acceptsPeer !== "function" || typeof provider.createApiPeer !== "function") throw new Error("Invalid Desktop local admission provider");
     const principal = provider.principal();
     if (principal.kind === "owner" || !provider.accepts(principal)) throw new Error("Desktop owner must map to a configured non-owner principal");
     const registration = { provider, secret };
@@ -231,7 +231,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
       if (principal.kind === "owner" || !registration.provider.accepts(principal)) return undefined;
       if (credential.version === 2) {
         const record = this.peers.get(credential.id);
-        if (!record || record.peer.signal.aborted || record.peer.principal.kind === "owner" || !registration.provider.accepts(record.peer.principal)) return undefined;
+        if (!record || record.peer.signal.aborted || !registration.provider.acceptsPeer(record.peer)) return undefined;
       }
       return Object.freeze({ kind: credential.version === 2 ? "api" : "browser", authority: credential.authority,
         expiresAt: credential.expiresAt, loginId: "native-desktop:" + credential.authority + (credential.version === 2 ? ":" + credential.id : ""),
@@ -244,7 +244,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
     const credential = this.browserAuth.registeredActorCredential(request, this.owner.get("webServer")?.protocol === "https:");
     if (!credential) return undefined;
     const record = this.peers.get(credential.id);
-    if (!record?.platformActor || record.peer.signal.aborted || record.peer.principal.kind === "owner") return undefined;
+    if (!record?.platformActor || record.peer.signal.aborted) return undefined;
     try {
       if (this.browserAdmission?.acceptsPeer?.(record.peer) !== true) return undefined;
       return { peer: record.peer, cookie: credential.cookie, expiresAt: credential.expiresAt, sharedBrowser: record.sharedBrowser === true };
@@ -252,7 +252,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
   }
   /** Issue the existing version-2 cookie for a provider-owned human Peer. */
   createActorApiCredential(peer: PeerScope): NativeActorApiCredential {
-    if (this.disposed || !peer || peer.signal.aborted || peer.principal.kind === "owner") throw new Error("A live human API Peer is required");
+    if (this.disposed || !peer || peer.signal.aborted) throw new Error("A live human API Peer is required");
     if (this.browserAdmission?.acceptsPeer?.(peer) !== true) throw new Error("The API Peer is not owned by the registered admission provider");
     const server = this.owner.get("webServer");
     if (!server || !Number.isInteger(server.port) || server.port <= 0) throw new Error("Native application listener is unavailable");
@@ -267,7 +267,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
   private publishDesktopLocalPeer(interactions: ConnectionInteractions, credential: NativeApiCredentialSeed): PeerId {
     if (!this.desktopLocalOwner || !credential || !Number.isFinite(credential.expiresAt)) throw new Error("Desktop native credential is required");
     const peer = this.desktopLocalOwner.provider.createApiPeer({ ...credential, interactions });
-    if (!peer || peer.principal.kind === "owner" || peer.signal.aborted || !this.desktopLocalOwner.provider.accepts(peer.principal)) throw new Error("Desktop API principal is invalid");
+    if (!peer || peer.signal.aborted || !this.desktopLocalOwner.provider.acceptsPeer(peer)) throw new Error("Desktop API principal is invalid");
     this.peers.set(peer.id, { peer, ownsSocket: false, platformActor: true });
     peer.signal.addEventListener("abort", () => { if (this.peers.get(peer.id)?.peer === peer) this.peers.delete(peer.id); }, { once: true });
     return peer.id;
@@ -298,7 +298,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
   }
 
   /** Create one in-process Peer owned by the Context that read this service. */
-  createPeer(options: { readonly principal: Principal; readonly interactions?: ConnectionInteractions }): PeerScope {
+  createPeer(options: { readonly principal: Principal; readonly actorPrincipal?: Principal; readonly interactions?: ConnectionInteractions }): PeerScope {
     return new Peer(this.ctx, options)
   }
 
