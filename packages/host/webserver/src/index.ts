@@ -389,6 +389,8 @@ export class WebServer extends Service {
   private readonly tlsConnections = new Set<Duplex>()
   private readonly indexTaps: ((html: string) => string)[] = []
   private fallback: WebRoute['handler'] | Pick<WebResourceRoute, 'resource'> | undefined
+  private httpPolicy: ((request: IncomingMessage) => boolean | Promise<boolean>) | undefined
+  private httpPolicyRequired = false
   private server!: Server
   private listenedPort: number | undefined
   private readonly gzip: NodeMiddleware | undefined
@@ -434,6 +436,18 @@ export class WebServer extends Service {
     }
     if (this.listenedPort === undefined) throw new Error('webserver: origin read before the listener bound a port')
     return `${this.protocol}//${host}:${String(this.listenedPort)}`
+  }
+
+  /**
+   * Register one policy before raw HTTP route/fallback dispatch.
+   * @param policy - the composing application's authorization of the actual request.
+   * @returns disposer; a withdrawn policy leaves HTTP closed until re-registered.
+   */
+  registerHttpPolicy(policy: (request: IncomingMessage) => boolean | Promise<boolean>): () => void {
+    if (this.httpPolicy) throw new Error('webserver: HTTP policy already registered')
+    this.httpPolicyRequired = true
+    this.httpPolicy = policy
+    return () => { if (this.httpPolicy === policy) this.httpPolicy = undefined }
   }
 
   /**
@@ -527,6 +541,11 @@ export class WebServer extends Service {
   /** Listen; resolves once the socket is bound (rejection = FAILED fiber). */
   async [Service.init](): Promise<void> {
     const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+      if (this.httpPolicyRequired && await this.httpPolicy?.(req) !== true) {
+        res.writeHead(403, { 'cache-control': 'no-store' })
+        res.end('HTTP admission denied')
+        return
+      }
       /* v8 ignore next -- `?? '/'` arm: node:http always sets url on server
       requests; the field is only optional on the client-side IncomingMessage type */
       const target = new URL(req.url ?? '/', 'http://x')
