@@ -471,6 +471,8 @@ export interface PeerScope {
   readonly ctx: Context
   /** Caller identity fixed at creation by in-process Host code; no wire field can set it. */
   readonly principal: Principal
+  /** Named author fixed by trusted server code; independent of native authority. */
+  readonly actorPrincipal?: Principal
   /** Aborted once the Peer is disposed; Remote streams that speak for the Peer end with it. */
   readonly signal: AbortSignal
   /** Whether the Peer may open a forwarded-event stream; this does not grant business permissions. */
