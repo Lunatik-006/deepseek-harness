@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import { win32 } from 'node:path'
 /**
  * Service Definition for the subprocess capability seam (`ctx.subprocess`): execution-world executable lookup,
  * fully specified provider-managed process ranges with raw or
@@ -82,6 +84,14 @@ export function scrubbedParentEnv(): Record<string, string> {
   if (process.platform === 'win32') {
     for (const key of Object.keys(env)) {
       if (key.toUpperCase() === 'SHELL') Reflect.deleteProperty(env, key)
+    }
+  }
+  // Native Windows Git SSH avoids an unnecessary MSYS dependency under confinement.
+  if (process.platform === 'win32' && !Object.keys(env).some(key => ['GIT_SSH', 'GIT_SSH_COMMAND'].includes(key.toUpperCase()))) {
+    const systemRoot = Object.entries(env).find(([key]) => key.toUpperCase() === 'SYSTEMROOT')?.[1]
+    if (systemRoot) {
+      const ssh = win32.join(systemRoot, 'System32', 'OpenSSH', 'ssh.exe')
+      if (existsSync(ssh)) env.GIT_SSH = ssh
     }
   }
   return env
