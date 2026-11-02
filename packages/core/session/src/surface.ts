@@ -9,6 +9,7 @@
  */
 
 import type { Message, ToolSchema } from '@deepseek-ai/dsh-llm'
+import {snapshotJsonValue} from '@deepseek-ai/dsh-util-values'
 import { SessionLogOffset, SessionSeq } from './types.ts'
 import { KNOWN_SESSION_EVENT_TYPES, MESSAGE_PROJECTION_EVENT_TYPES } from './known-event-types.ts'
 import type {
@@ -168,6 +169,14 @@ export function validateSessionEventData(
   subject: string,
 ): void {
   const data: unknown = event.data
+  if (event.type === 'tool/input-updated') {
+    if (!isRecord(data) || Object.keys(data).length !== 2
+      || typeof data['callId'] !== 'string' || !data['callId']
+      || !Object.hasOwn(data, 'arguments') || snapshotJsonValue(data['arguments']) === undefined) {
+      throw new Error(`${subject} requires canonical effective tool input`)
+    }
+    return
+  }
   if (SURFACE_EVENT_TYPES.has(event.type) && isRecord(data)) {
     const message = event.type === 'user/message' ? data : data['message']
     if (isRecord(message)) {

@@ -18,6 +18,8 @@ import type { ScopeKey, ScopeLayer } from '@deepseek-ai/dsh-scope'
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
 
+interface PlatformSkillCacheBridge {skillCacheDiscriminator(scope:ScopeKey,signal?:AbortSignal):Promise<string>}
+
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const DEFAULT_COLLECT_CACHE_ENTRIES = 128
 const MAX_COLLECT_ATTEMPTS = 2
@@ -101,6 +103,9 @@ export type SkillRegistration = Omit<SkillDefinition, 'invocation' | 'provider'>
 
 /** Caller context used for cwd-sensitive and abortable provider work. */
 export interface SkillLookupOptions {
+  /** Exact viewing Agent, already passed by the registry; providers use its retained realm. */
+  readonly scope?: ScopeKey | undefined
+
   /** Workspace selector for the current lookup. */
   readonly cwd?: string | undefined
   /** Abort discovery or loading work for the current caller. */
@@ -524,11 +529,15 @@ export class SkillRegistry extends Service {
       // The chain is part of the key rather than assumed stable: a blank-session
       // recompose re-parents an existing scope without touching this registry,
       // and only a chain-bearing key makes the next read see the new preset.
-      const key = this.collectCacheKey(options.cwd, scopeChainOf(options.scope), revision)
+      const project=this.ctx.get('platformProjectConfig' as keyof Context) as unknown as PlatformSkillCacheBridge|undefined
+      const scoped=(options.scope as {session?:unknown}|undefined)?.session
+      const discriminator=project?(scoped?await project.skillCacheDiscriminator(options.scope!,options.signal):'bundled-only'):undefined
+      const key = this.collectCacheKey(options.cwd, scopeChainOf(options.scope), revision)+(project?'\0'+discriminator:'')
       const cached = this.collectCache.get(key)
       if (cached !== undefined) return { entries: cached, cacheable: true }
 
-      const result = await this.collectFresh(options)
+      const fresh = await this.collectFresh(options)
+      const result=project&&!scoped?{...fresh,entries:new Map([...fresh.entries].filter(([,entry])=>entry.candidate.source==='bundled'))}:fresh
       throwIfAborted(options.signal)
       if (revision !== this.revision) {
         if (attempt < MAX_COLLECT_ATTEMPTS) {
