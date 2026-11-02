@@ -127,11 +127,10 @@ export const USER_GLOBAL_FILE = 'AGENTS.md'
  * @returns `user-global`, `agents-global`, `.`, or the containing project-relative directory.
  */
 export function scopeForDisplayPath(displayPath: string): string {
-  if (displayPath === `${DEFAULT_DSH_HOME_DISPLAY}/${USER_GLOBAL_FILE}`
-    || displayPath === `$${DSH_HOME_ENV}/${USER_GLOBAL_FILE}`) return USER_GLOBAL_DIRECTORY
-  if (displayPath === `${DEFAULT_AGENTS_HOME_DISPLAY}/${USER_GLOBAL_FILE}`
-    || displayPath === `$${AGENTS_HOME_ENV}/${USER_GLOBAL_FILE}`) return AGENTS_GLOBAL_DIRECTORY
-  return dirname(displayPath)
+    if(platformAbsoluteInstruction(displayPath))return USER_GLOBAL_DIRECTORY;
+	if (displayPath === `${DEFAULT_DSH_HOME_DISPLAY}/AGENTS.md` || displayPath === `$${DSH_HOME_ENV}/AGENTS.md`) return USER_GLOBAL_DIRECTORY;
+	if (displayPath === `${DEFAULT_AGENTS_HOME_DISPLAY}/AGENTS.md` || displayPath === `$${AGENTS_HOME_ENV}/AGENTS.md`) return AGENTS_GLOBAL_DIRECTORY;
+	return dirname(displayPath);
 }
 
 /**
@@ -199,7 +198,8 @@ export function candidateScopeKey(directory: string, candidateName: string): str
  * @returns the scope key pairing the file's directory with its name.
  */
 export function instructionScopeKey(displayPath: string): string {
-  return candidateScopeKey(scopeForDisplayPath(displayPath), basename(displayPath))
+    if(platformAbsoluteInstruction(displayPath))return candidateScopeKey(USER_GLOBAL_DIRECTORY,USER_GLOBAL_FILE);
+	return candidateScopeKey(scopeForDisplayPath(displayPath), basename(displayPath));
 }
 
 /**
@@ -432,3 +432,5 @@ export function renderAgentInstructions(
 ): RenderedAgentInstructions {
   return renderAgentInstructionSet(files, options).rendered
 }
+
+export function platformAbsoluteInstruction(path:string):boolean {return /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(path)}

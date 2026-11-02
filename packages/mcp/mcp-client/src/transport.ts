@@ -7,6 +7,9 @@
  */
 
 import type { Transport } from '@modelcontextprotocol/client'
+import type {Context} from '@deepseek-ai/cordis'
+import type {Agent} from '@deepseek-ai/dsh-agent'
+import {scopeOf} from '@deepseek-ai/dsh-scope'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
@@ -28,15 +31,23 @@ function buildChildEnv(extra: Record<string, string>): Record<string, string> {
  * @param config - Resolved plugin config discriminated on `transport`.
  * @returns A connected-ready MCP Transport (stdio or Streamable HTTP).
  */
-export function createTransport(config: Config): Transport {
+interface PlatformMcpBridge {createMcpTransport(agent:Agent,config:Config):Transport}
+export function createTransport(config: Config,ctx?:Context): Transport {
   switch (config.transport) {
-    case 'stdio':
+    case 'stdio': {
+      const project=ctx?.get('platformProjectConfig' as keyof Context) as unknown as PlatformMcpBridge|undefined
+      if(project&&ctx) {
+        const agent=scopeOf(ctx) as Agent|undefined
+        if(!agent?.session||ctx.get('agents')?.get(agent.id)!==agent)throw new Error('Project MCP stdio requires an exact Agent realm')
+        return project.createMcpTransport(agent,config)
+      }
       return new StdioClientTransport({
         command: config.command,
         args: config.args,
         env: buildChildEnv(config.env),
         cwd: config.cwd,
       })
+    }
     case 'streamable-http':
       return new StreamableHTTPClientTransport(
         new URL(config.url),

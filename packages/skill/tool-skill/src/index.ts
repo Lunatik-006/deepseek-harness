@@ -20,7 +20,22 @@ import {
   renderSkillContent,
   type SkillInvocationSource,
   type SkillSummary,
+  type SkillDefinition,
 } from '@deepseek-ai/dsh-skill'
+
+interface PlatformSkillRequest {agent:Agent|undefined;skill:SkillDefinition;signal:AbortSignal;origin:'model'|'user';input?:string}
+interface PlatformSkillInvocationBridge {invoke(request:PlatformSkillRequest):Promise<{handled:boolean;content?:string}>}
+interface PlatformSkillContextBridge {resolve(agent:Agent,signal:AbortSignal):Promise<{cwd:string}>}
+async function platformSkillCwd(ctx:Context,agent:Agent,signal:AbortSignal):Promise<string> {
+  const project=ctx.get('platformProjectConfig' as keyof Context) as unknown as PlatformSkillContextBridge|undefined
+  return project?(await project.resolve(agent,signal)).cwd:ctx.workingDirectory.ensure(agent,signal)
+}
+async function platformInvokeSkill(ctx:Context,request:PlatformSkillRequest):Promise<{handled:boolean;content?:string}> {
+  const bridge=ctx.get('platformSkillInvocation' as keyof Context) as unknown as PlatformSkillInvocationBridge|undefined
+  if(bridge)return bridge.invoke(request)
+  if(request.skill.metadata?.claude)throw new Error('Claude skill metadata requires the native invocation bridge')
+  return{handled:false}
+}
 
 export const name = 'tool-skill'
 export const inject = ['agents', 'tools', 'skills', 'workingDirectory']
@@ -83,6 +98,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     name: 'skill',
     description: 'Load the full instructions for a skill. Call it before acting on a task that names or clearly matches a skill in the session skill catalog.',
     parameters: {
+      arguments:{type:'string',description:'Task or arguments for a delegated Claude skill. Omit to use the current user request.'},
       name: { type: 'string', required: true, description: 'The exact skill name from the available skills list.' },
     },
     output: {
@@ -131,7 +147,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       }
       // The agent is its own scope key, so the lookup resolves the layered
       // registry exactly as this agent's composition sees it.
-      const cwd = exec.agent === undefined ? undefined : await ctx.workingDirectory.ensure(exec.agent, exec.signal)
+      const cwd = exec.agent === undefined ? undefined : await platformSkillCwd(ctx,exec.agent,exec.signal)
       const lookup = { cwd, signal: exec.signal, scope: exec.agent }
       const summary = (await ctx.skills.list(lookup)).find(skill => skill.name === args.name)
       if (!summary) {
@@ -147,13 +163,14 @@ export function apply(ctx: Context, config: Config = {}): void {
       if (!isModelInvocable(skill)) {
         throw new Error(`skill "${args.name}" is not available for model invocation`)
       }
+      const dispatched=await platformInvokeSkill(ctx,{agent:exec.agent,skill,signal:exec.signal,origin:'model',input:args.arguments??''})
       return {
         name: skill.name,
         provider: skill.provider,
         ...skill.resourceBase !== undefined ? {
           resourceBase: { ...skill.resourceBase },
         } : {},
-        content: skill.content,
+        content: dispatched.handled?dispatched.content??'':skill.content,
       }
     },
     presentCall(args) {
@@ -185,7 +202,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     const names = invokedSkillNames(messages)
     if (names.length === 0) return decision
     signal.throwIfAborted()
-    const lookup = { cwd: await ctx.workingDirectory.ensure(agent, signal), signal, scope: agent }
+    const lookup = { cwd: await platformSkillCwd(ctx,agent,signal), signal, scope: agent }
     const injections: UserMessage[] = []
     for (const name of names) {
       const skill = await ctx.skills.get(name, lookup)
@@ -195,9 +212,11 @@ export function apply(ctx: Context, config: Config = {}): void {
       // on the loaded definition — the single lookup that produces what is
       // actually injected.
       if (skill === undefined || !isUserInvocable(skill)) continue
+      const dispatched=await platformInvokeSkill(ctx,{agent,skill,signal,origin:'user',input:messages.flatMap(message=>message.content.filter(block=>block.type==='text').map(block=>block.text)).join('\n')})
+      const invocationSkill=dispatched.handled?{...skill,content:dispatched.content??''}:skill
       const source: SkillInvocationSource = { kind: 'skill-invocation', name, form: 'instructions' }
       injections.push(createUserMessage({
-        content: [{ type: 'text', text: renderSkillContent(skill) }],
+        content: [{ type: 'text', text: renderSkillContent(invocationSkill) }],
         source,
       }))
     }
@@ -221,7 +240,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     signal.throwIfAborted()
     const toolVisible = ctx.tools.get(skillTool.name, agent) === skillTool
     const snapshot = toolVisible
-      ? await ctx.skills.snapshot({ cwd: await ctx.workingDirectory.ensure(agent, signal), signal, scope: agent })
+      ? await ctx.skills.snapshot({ cwd: await platformSkillCwd(ctx,agent,signal), signal, scope: agent })
       : { skills: [], complete: true }
     signal.throwIfAborted()
     if (!snapshot.complete) return decision
