@@ -81,9 +81,10 @@ export interface DesktopAccountBackend {
  * @param origin - Host Web origin.
  * @param invoke - validated unary RPC caller.
  * @param cookies - Electron session cookie reader.
+ * @param nativeHeaders - Main-owned local proof for this already-selected Host.
  * @returns account operations; watch callers own their subscriptions.
  */
-export function desktopAccountBackend(origin: string, invoke: AccountInvoke, cookies: () => Promise<string>): DesktopAccountBackend {
+export function desktopAccountBackend(origin: string, invoke: AccountInvoke, cookies: () => Promise<string>, nativeHeaders: Readonly<Record<string, string>> = {}): DesktopAccountBackend {
   const call = async (method: string, args: Record<string, unknown> = {}): Promise<AccountView> =>
     accountView(await invoke({ namespace: 'account', method, args }))
   return {
@@ -102,7 +103,7 @@ export function desktopAccountBackend(origin: string, invoke: AccountInvoke, coo
           if (closed) return
           const url = new URL(REMOTE_STREAM_MUX_PATH, origin)
           url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-          socket = new WebSocket(url, { headers: { cookie, origin }, maxPayload: 65_536 })
+          socket = new WebSocket(url, { headers: { cookie, origin, ...nativeHeaders }, maxPayload: 65_536 })
           socket.on('open', () => {
             if (onAnalyticsEnabledChanged !== undefined) socket?.send(JSON.stringify({ type: 'open', streamId: analyticsPolicyStreamId, endpoint: 'productAnalytics/watchPolicy', payload: { args: {} } }))
             socket?.send(JSON.stringify({ type: 'open', streamId: expiryStreamId, endpoint: 'account/watchExpiry', payload: { args: {} } }))
