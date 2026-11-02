@@ -123,6 +123,7 @@ export function apply(ctx: Context, config: Config): void {
     if(platformResolvedConfig.candidateSelection==='first-present'&&!platformBridge)throw new Error('First-present instructions require the exact Agent project context')
     const platformProject=platformResolvedConfig.candidateSelection==='first-present'?await platformBridge!.resolve(agent,signal):undefined
     const resolved=platformProject?{...platformResolvedConfig,...await platformBridge!.instructionPolicy(agent,signal,platformProject)}:platformResolvedConfig
+    if(platformProject)touchedPaths=await Promise.all(touchedPaths.map(async path=>platformProject.fs.processPath(await platformProject.fs.resolve(path,{cwd:platformProject.cwd,signal}))))
     signal.throwIfAborted()
     if (resolved.maxBytes <= 0 || !Number.isFinite(resolved.maxBytes)) {
       return undefined
