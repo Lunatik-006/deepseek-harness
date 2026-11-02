@@ -10,7 +10,7 @@ import z from '@deepseek-ai/schemastery'
 import { AnonymousEntries, NamedEntries, ScopedLayers, scopeOf, scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { ScopeKey, ScopeLayer, Scoped } from '@deepseek-ai/dsh-scope'
 import type { ToolCallId, ContentBlock, ToolSchema } from '@deepseek-ai/dsh-llm'
-import { HarnessError } from '@deepseek-ai/dsh-llm'
+import { HarnessError, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
 import { assertNever, deepFreeze, snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
@@ -31,6 +31,8 @@ import { renderToolsSdkPy } from './py-types.ts'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
+    'tool-input-updated': {kind: 'tool-input-updated'; form: 'instructions'; callId: ToolCallId}
+
     /** Tool availability changes supplied by the tool registry. */
     'tool-registry': { kind: 'tool-registry' }
   }
@@ -602,14 +604,13 @@ export type ToolExecutionResult = ToolExecutionSuccess | ToolExecutionFailure
  * the canonical cancellation result without presenting a policy denial; `ask`
  * runs only after an approval service returns `allowed-once` and otherwise
  * denies; its `reason` is the audited approval reason and its optional
- * `displayReason` is the localized prompt text. Input rewriting is excluded because arguments are already logged and
- * presented.
+ * `displayReason` is the localized prompt text. Input rewriting is schema validated and recorded before approval and dispatch. Original model call arguments remain immutable.
  */
 export type PreToolDecision =
-  | { kind: 'allow' }
+  | { kind: 'allow'; updatedInput?: JsonValue }
   | { kind: 'deny'; reason: string; info?: ToolErrorInfo }
   | { kind: 'cancel' }
-  | { kind: 'ask'; reason?: string; displayReason?: { readonly en: string; readonly [locale: string]: string } }
+  | { kind: 'ask'; updatedInput?: JsonValue; reason?: string; displayReason?: { readonly en: string; readonly [locale: string]: string } }
 
 /**
  * Post-dispatch decision: accept, replace one projection, attach context for the
@@ -1514,6 +1515,29 @@ export class ToolRuntime extends Service {
         carrier, 'tools/pre-execute', exec,
         () => Promise.resolve<PreToolDecision>({ kind: 'allow' }),
       )
+      if (this.callerCancelled(exec)) {
+        return await next({ kind: 'post-result', exec, result: toolAbortedBeforeDispatchResult() })
+      }
+      if ((gate.kind === 'allow' || gate.kind === 'ask') && Object.hasOwn(gate, 'updatedInput')) {
+        const detached = snapshotJsonValue(gate.updatedInput)
+        if (this.callerCancelled(exec)) {
+          return await next({ kind: 'post-result', exec, result: toolAbortedBeforeDispatchResult() })
+        }
+        if (detached === undefined) throw new TypeError('updatedInput must be losslessly JSON-serializable')
+        const definition = this.resolveExecution(exec.name, exec.agent, exec.parent !== undefined)
+        if (!definition) throw new ToolNotFoundError(exec.name)
+        const violations = validateJsonSchemaValue(definition.parameters, detached, '')
+        if (violations.length) throw new ToolArgsError(violations)
+        if (!exec.agent) throw new Error('Updated tool input requires a native Session audit')
+        // The registry owns this execution; callers retain the readonly view and original call.
+        Object.defineProperty(exec, 'arguments', { value: deepFreeze(detached), enumerable: true, writable: true, configurable: true })
+        exec.agent.session.append('tool/input-updated', { callId: exec.callId, arguments: detached })
+        exec.deferContext(createUserMessage({
+          content: [{ type: 'text', text: 'A Host hook prepared updated input for tool call ' + String(exec.callId)
+            + '. Original model arguments remain unchanged in history. Effective input: ' + JSON.stringify(detached) }],
+          source: { kind: 'tool-input-updated', form: 'instructions', callId: exec.callId },
+        }))
+      }
       const askResolution = gate.kind === 'ask'
         ? await this.serviceAsk(exec, gate)
         : { decision: gate, approvalCancelled: false }

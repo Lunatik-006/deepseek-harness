@@ -101,6 +101,9 @@ export type SkillRegistration = Omit<SkillDefinition, 'invocation' | 'provider'>
 
 /** Caller context used for cwd-sensitive and abortable provider work. */
 export interface SkillLookupOptions {
+  /** Exact viewing Agent, already passed by the registry; providers use its retained realm. */
+  readonly scope?: ScopeKey | undefined
+
   /** Workspace selector for the current lookup. */
   readonly cwd?: string | undefined
   /** Abort discovery or loading work for the current caller. */
