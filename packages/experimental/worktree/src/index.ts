@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { Context, Service, symbols } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-fs'
 import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 import type {} from '@deepseek-ai/dsh-system-prompt'
@@ -73,7 +74,11 @@ declare module '@deepseek-ai/cordis' {
     worktrees: WorktreeService
   }
   interface Events {
-    'worktree/project-context'(payload: { agent: Agent, signal?: AbortSignal }, next: () => Promise<{ sourceRoot: string, executorId?: string } | undefined>): Promise<{ sourceRoot: string, executorId?: string } | undefined>
+    /** Resolve the project source before Git setup using the actual claimed first-step inputs.
+     * @mode waterfall
+     * @param payload - exact Agent, operation cancellation and optional admitted native messages.
+     */
+    'worktree/project-context'(payload: { agent: Agent, signal?: AbortSignal, messages?: readonly UserMessage[] }, next: () => Promise<{ sourceRoot: string, executorId?: string } | undefined>): Promise<{ sourceRoot: string, executorId?: string } | undefined>
   }
 }
 
@@ -159,7 +164,7 @@ export class WorktreeService extends Service {
         return undefined
       })
       // Prepare before downstream instruction/rules pre-steps, not merely before system assembly.
-      ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
+      ctx.on('agent/pre-step', async ({ agent, signal, messages }, next) => {
         if (agent !== undefined && this.owns(agent) && this.isTopLevel(agent)
           && this.ctx.workingDirectory.get(agent.session) === agent.session.header.cwd
           && !agent.session.snapshotEvents().some(event => event.type.startsWith('assistant/') || event.type.startsWith('tool/'))) {
@@ -168,7 +173,7 @@ export class WorktreeService extends Service {
         if (agent !== undefined && this.owns(agent) && this.newSessions.has(agent)) {
           let starting = this.startingSessions.get(agent)
           if (starting === undefined) {
-            starting = this.prepareNewSession(agent, signal)
+            starting = this.prepareNewSession(agent, signal, messages)
             this.startingSessions.set(agent, starting)
           }
           try {
@@ -196,14 +201,14 @@ export class WorktreeService extends Service {
   }
 
   /** Gate the first prompt while retaining the original project header and sandbox policy. */
-  private async prepareNewSession(agent: Agent, signal?: AbortSignal): Promise<void> {
+  private async prepareNewSession(agent: Agent, signal?: AbortSignal, messages?: readonly UserMessage[]): Promise<void> {
     const control = AbortSignal.any([this.lifetime.signal, this.ctx.worktreeOwnership.signal, ...signal ? [signal] : []])
     const operation = this.ownedOperation(agent, async () => {
       const saved = await this.ctx.worktreeOwnership.get(agent.session.id)
       if (saved) {
         const owned = saved
         if (owned.sessionId !== agent.session.id) throw new Error('Invalid worktree owner')
-        const context = await this.ctx.waterfall('worktree/project-context', { agent, signal: control }, () => Promise.resolve(undefined))
+        const context = await this.ctx.waterfall('worktree/project-context', { agent, signal: control, messages }, () => Promise.resolve(undefined))
         if (owned.executionKey !== (context?.executorId ?? 'local-host')) throw new Error('Recorded worktree belongs to another executor')
         const target = await this.ctx.fs.resolve(owned.path, { signal: control })
         const info = await this.ctx.fs.stat(target, control)
@@ -213,7 +218,7 @@ export class WorktreeService extends Service {
       }
       const cwd = await this.ctx.workingDirectory.ensure(agent, control)
       if (!await this.hasGitDirectory(cwd, control)) return
-      await this.createCheckout(agent, this.resolve({}), control, true)
+      await this.createCheckout(agent, this.resolve({}), control, true, undefined, messages)
     })
     this.pending.add(operation)
     try {
@@ -274,10 +279,10 @@ export class WorktreeService extends Service {
     return { branch, revision, detached: request.detached ?? this.config.detached }
   }
 
-  private async createCheckout(agent: Agent, { branch, revision, detached }: WorktreeSpec, signal: AbortSignal, bootstrap = false, override?: SandboxExecutionPolicy): Promise<CreatedWorktree> {
+  private async createCheckout(agent: Agent, { branch, revision, detached }: WorktreeSpec, signal: AbortSignal, bootstrap = false, override?: SandboxExecutionPolicy, messages?: readonly UserMessage[]): Promise<CreatedWorktree> {
     if (await this.ctx.worktreeOwnership.get(agent.session.id)) throw new Error('This session already owns a worktree; finish it before creating another')
     const current = await this.ctx.workingDirectory.ensure(agent, signal)
-    const context = await this.ctx.waterfall('worktree/project-context', { agent, signal }, () => Promise.resolve(undefined))
+    const context = await this.ctx.waterfall('worktree/project-context', { agent, signal, messages }, () => Promise.resolve(undefined))
     const cwd = context?.sourceRoot ?? current
     const sessionPolicy = this.ctx.sandboxPolicy.resolve({ session: agent.session })
     const trustedBootstrap = bootstrap && this.config.bootstrapSandbox === 'host'
