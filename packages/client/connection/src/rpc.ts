@@ -250,7 +250,7 @@ export interface HostConnectionHandle extends NativeDesktopLocalAdmission {
    * @param options - fixed principal and optional interaction participation (default `answer`).
    * @returns a new Peer distinct from every other Peer.
    */
-  createPeer(options: { readonly principal: Principal; readonly interactions?: 'answer' | 'none' }): PeerScope
+  createPeer(options: { readonly principal: Principal; readonly actorPrincipal?: Principal; readonly interactions?: 'answer' | 'none' }): PeerScope
 
   /**
    * Claim a physical socket for an API Peer; browser sockets share their owner Peer.
