@@ -310,8 +310,8 @@ export class WorktreeService extends Service {
       if (bootstrap && (await run(repositoryRoot, ['check-ignore', '--quiet', '--', path], [0, 1])).exitCode !== 0) {
         throw new Error('Configured worktree pool does not ignore the checkout; preserve its existing .gitignore and configure an ignored pool')
       }
-      await run(repositoryRoot, ['--work-tree', repositoryRoot, 'worktree', 'add', '--no-track',
-        ...detached ? ['--detach'] : ['-b', branch], '--', path, baseCommit])
+      await run(repositoryRoot, ['--work-tree', repositoryRoot, 'worktree', 'add',
+        ...detached ? ['--detach'] : ['--no-track', '-b', branch], '--', path, baseCommit])
       const canonicalPath = this.ctx.fs.processPath(await this.ctx.fs.resolve(path, { signal }))
       const owned = { sessionId: agent.session.id, executionKey: context?.executorId ?? 'local-host', path: canonicalPath, branch: detached ? null : branch, baseCommit, repositoryRoot }
       await this.ctx.worktreeOwnership.claim(owned)
