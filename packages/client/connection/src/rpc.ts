@@ -208,6 +208,8 @@ export interface HostConnectionRpc {
 export interface HostConnectionHandle extends NativeDesktopLocalAdmission {
   /** Register the deployment's sole authenticated browser admission provider. */
   registerBrowserAdmission(provider: ConnectionBrowserAdmission): () => void
+  /** Resolve per-request globals after authenticating the actual carrier request. */
+  indexInjections(request: ConnectionTrustRequest): Promise<readonly NativeDesktopBootInjection[] | undefined>
   /** Generic RPC channel registry. */
   readonly rpc: HostConnectionRpc
   /** Exact Fetch routes for streaming or browser-native responses. */
@@ -391,6 +393,8 @@ export interface NativeDesktopLocalAdmission {
 export interface ConnectionBrowserAdmission {
   admit(request: ConnectionTrustRequest): PeerAdmission
   authorizeIndex(request: ConnectionIndexRequest, response: ConnectionIndexResponse): boolean
+  /** Include the current principal's RemoteAccess baseline and application state. */
+  bootstrap?(request: ConnectionTrustRequest, peer: PeerScope): Promise<readonly NativeDesktopBootInjection[]> | readonly NativeDesktopBootInjection[]
   /** Accept only the exact live Peer instances owned by this provider. */
   acceptsPeer?(peer: PeerScope): boolean
   /** Authorize an additional RPC channel before decoding its request body. */

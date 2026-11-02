@@ -7,12 +7,14 @@
  * is 405. An HTTP index request first passes Connection's browser
  * authentication and renders for the browser Peer; an in-process read renders
  * for the Peer its caller admitted. Both renders go through the webserver's
- * index render (structured injection rows, then raw taps). Non-index assets
- * stay public; every file other than the index carries a weak ETag with
- * `cache-control: no-cache` and answers a matching `If-None-Match` with 304,
- * while the index carries no cache headers. The dist location is workspace
- * knowledge of the composing application, so `distIndex` is typically
- * supplied through a `!!js` expression, never hardcoded by a deployment.
+ * index render (structured injection rows, then raw taps); an authenticated
+ * HTTP render also merges the carrier's admitted actor globals and is marked
+ * `no-store`. Non-index assets stay public; every file other than the index
+ * carries a weak ETag with `cache-control: no-cache` and answers a matching
+ * `If-None-Match` with 304, while the index carries no cache headers. The dist
+ * location is workspace knowledge of the composing application, so `distIndex`
+ * is typically supplied through a `!!js` expression, never hardcoded by a
+ * deployment.
  * @module @deepseek-ai/dsh-host-frontend-static
  */
 
@@ -21,7 +23,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type {} from '@deepseek-ai/dsh-client-connection'
+import type { PeerScope } from '@deepseek-ai/dsh-client-connection'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 
 /** Stable Cordis plugin name. */
@@ -74,6 +76,12 @@ function bytesBody(bytes: Uint8Array): ReadableStream<Uint8Array> {
   })
 }
 
+/** One rendered index document and the response headers its render requires. */
+interface RenderedIndex {
+  readonly html: string
+  readonly headers?: Readonly<Record<string, string>>
+}
+
 /**
  * Answer one GET or HEAD dist request; the webserver answers any other method
  * with 405 before a resource runs. A malformed percent-escape or a filesystem
@@ -83,8 +91,8 @@ function bytesBody(bytes: Uint8Array): ReadableStream<Uint8Array> {
  * @param distIndex - absolute path of index.html inside distRoot.
  * @param authorizeIndex - answers an index request before its bytes are read:
  * the response to send instead of the index, or undefined to serve it.
- * @param renderIndex - turns the raw index.html body into the served document
- * for the dist root and configured index path.
+ * @param renderIndex - renders the index body for the dist root and configured
+ * index path, after admission, with any response-only headers it requires.
  * @returns the dist response; a HEAD response carries the GET status and
  * headers without a body. A file other than the index carries
  * `cache-control: no-cache` and a weak ETag from a SHA-1 of its bytes, and a
@@ -93,7 +101,7 @@ function bytesBody(bytes: Uint8Array): ReadableStream<Uint8Array> {
 async function serveStatic(
   request: Request, distRoot: string, distIndex: string,
   authorizeIndex: () => Response | undefined,
-  renderIndex: (html: string) => string,
+  renderIndex: () => Promise<RenderedIndex>,
 ): Promise<Response> {
   const target = resolve(normalize(join(distRoot, decodeURIComponent(new URL(request.url).pathname))))
   // Traversal rejection: the target must be distRoot itself (`/`) or stay under
@@ -106,8 +114,9 @@ async function serveStatic(
     if (target === distRoot || target === distIndex) {
       const refusal = authorizeIndex()
       if (refusal !== undefined) return refusal
-      body = renderIndex(await readFile(distIndex, 'utf8'))
-      headers = { 'content-type': HTML_MIME }
+      const rendered = await renderIndex()
+      body = rendered.html
+      headers = { 'content-type': HTML_MIME, ...rendered.headers }
     } else {
       body = await readFile(target)
       // Weak: gzip changes the transferred bytes.
@@ -149,6 +158,19 @@ export function apply(ctx: Context, config: Config): void {
     })
     return admitted ? undefined : new Response(body, { status, headers })
   }
+  // Render after admission: an authenticated HTTP index merges the actual
+  // carrier's actor globals before the base, which precedes every resource
+  // reference. An in-process read already speaks for its caller-supplied Peer.
+  const renderIndex = async (peer: PeerScope | undefined, request: Request | undefined): Promise<RenderedIndex> => {
+    let body = ctx.webServer.renderIndex(await readFile(distIndex, 'utf8'), peer ?? ctx.connection.browserPeer)
+    const globals = request === undefined ? undefined : await ctx.connection.indexInjections(request)
+    if (globals !== undefined) {
+      const payload = JSON.stringify(globals).replace(/</g, '\\u003c')
+      body = body.replace(/<\/head>/i, `<script>for(const row of ${payload})globalThis[row.name]=row.value;</script></head>`)
+    }
+    body = body.replace(/<head(?:\s[^>]*)?>/i, open => `${open}<base href="./">`)
+    return { html: body, ...(globals === undefined ? {} : { headers: { 'cache-control': 'no-store' } }) }
+  }
   ctx.effect(() => ctx.webServer.registerFallback({
     resource: (request, peer) => serveStatic(
       request,
@@ -157,11 +179,7 @@ export function apply(ctx: Context, config: Config): void {
       // A read with a Peer was admitted by its caller; an HTTP request carries
       // none and passes Connection's browser authentication instead.
       () => peer === undefined ? authorizeIndex(request) : undefined,
-      // The browser authentication admits the owner's shared browser Peer. The
-      // base goes in after all index transforms, so it precedes every resource
-      // reference they insert.
-      html => ctx.webServer.renderIndex(html, peer ?? ctx.connection.browserPeer)
-        .replace(/<head(?:\s[^>]*)?>/i, open => `${open}<base href="./">`),
+      () => renderIndex(peer, peer === undefined ? request : undefined),
     ),
   }), 'frontend-static: fallback seat')
 }
