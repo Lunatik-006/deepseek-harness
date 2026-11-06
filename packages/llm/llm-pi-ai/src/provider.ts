@@ -23,8 +23,19 @@ import type { Api, ApiKeyAuth, Model, Provider, ProviderStreams } from '@earendi
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
+import { withOpenCodeSessionHeader } from '@earendil-works/pi-ai/providers/opencode-headers'
 import { catalogProvider, PiAiCatalogError } from './catalog.ts'
 import { createProvider } from './models.ts'
+
+/**
+ * Routes whose catalog provider wraps every protocol with OpenCode's
+ * per-conversation routing header. OpenCode Go rejects a Beam Free request
+ * without `x-opencode-session` as `400 MissingSessionID`, so a route rebuilt
+ * over an explicitly named protocol — which skips catalog reuse — applies the
+ * same wrapper the catalog provider itself uses instead of dropping the header
+ * with the reused provider.
+ */
+const OPENCODE_SESSION_ROUTES: ReadonlySet<string> = new Set(['opencode', 'opencode-go'])
 
 /**
  * Wire protocols a configured route may name, mapped to pi-ai's lazily loaded
@@ -160,6 +171,10 @@ function reuseCatalogProvider(base: Provider, spec: ProviderSpec): Provider {
 
 /**
  * Build the pi-ai provider for one resolved route.
+ *
+ * A route rebuilt over an explicitly named protocol keeps the catalog
+ * provider's OpenCode session-header wrapper, so a hand-declared OpenCode
+ * route still routes requests by Session instead of failing `400 MissingSessionID`.
  * @param spec - the resolved route facts.
  * @returns the provider to register in the adapter's `Models` collection.
  * @throws Error when the route names a wire protocol this build cannot serve.
@@ -181,12 +196,15 @@ export function buildProvider(spec: ProviderSpec): Provider {
       + ` supported protocols are ${supportedProtocols().join(', ')}`,
     )
   }
+  const streams = factory()
   return createProvider({
     id: spec.provider,
     name: spec.displayName,
     ...spec.baseURL === undefined ? {} : { baseUrl: spec.baseURL },
     auth: routeAuth(spec, catalog),
     models: spec.models,
-    api: factory(),
+    // The wrapper belongs to the route, not to the construction path: an
+    // explicit protocol must not cost an OpenCode route its session header.
+    api: OPENCODE_SESSION_ROUTES.has(spec.provider) ? withOpenCodeSessionHeader(streams) : streams,
   })
 }
