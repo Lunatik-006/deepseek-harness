@@ -120,7 +120,10 @@ describe('API credentials', () => {
     auth.authorizeConnect(request(auth.authenticatedUrl(`http://${authority}/connect`)), {
       ...res.value,
       writeHead(status, headers) {
-        expect(publish).toHaveBeenCalledExactlyOnceWith('none')
+        expect(publish).toHaveBeenCalledExactlyOnceWith('none', {
+          authority,
+          expiresAt: issuedAt + 30 * 86_400_000,
+        })
         return res.value.writeHead(status, headers)
       },
     }, false, publish)

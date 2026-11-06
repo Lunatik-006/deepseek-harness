@@ -347,8 +347,10 @@ describe('connection node half', () => {
 
   it('registers the API and connect HTTP routes and removes them with the fiber', async () => {
     const { routes, upgrades, dispose } = await mounted()
-    expect(routes).toHaveLength(2)
+    expect(routes).toHaveLength(3)
     expect(routes[0]).toMatchObject({ kind: 'prefix', path: API_PATH })
+    expect(routes[1]).toMatchObject({ kind: 'exact', path: '/connect' })
+    expect(routes[2]).toMatchObject({ kind: 'exact', path: '/desktop/bootstrap' })
     expect(upgrades).toHaveLength(0)
     await dispose()
     expect(routes).toHaveLength(0)
@@ -443,7 +445,7 @@ describe('connection node half', () => {
     ctx.provide('webServer', fakeHttpServer(routes, []) as WebServer)
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    expect(routes).toHaveLength(2)
+    expect(routes).toHaveLength(3)
     expect(routes[0]).toMatchObject({ kind: 'prefix', path: API_PATH })
 
     const connection = ctx.get('connection') as HostConnectionHandle
@@ -480,7 +482,7 @@ describe('connection node half', () => {
     expect(() => connection.rpc.handle('/rpc', async () => ({ ok: true, value: null })))
       .toThrow(/duplicate route/)
     await remove()
-    expect(routes.map(candidate => candidate.path)).toEqual([API_PATH, '/connect'])
+    expect(routes.map(candidate => candidate.path)).toEqual([API_PATH, '/connect', '/desktop/bootstrap'])
     await fiber.dispose()
     expect(routes).toHaveLength(0)
   })

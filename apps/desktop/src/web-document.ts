@@ -78,7 +78,12 @@ const PLUGIN_BUNDLE_PATH = /^\/plugins\//u
  * @param transport - Optional main-owned local proof, never renderer-supplied.
  * @returns Host response without connection-level headers.
  */
-export async function forwardWebRequest(request: Request, host: string, cookie: string, transport?: DesktopLocalTransport): Promise<Response> {
+export async function forwardWebRequest(
+  request: Request,
+  host: string,
+  cookie: string,
+  transport?: DesktopLocalTransport,
+): Promise<Response> {
   const source = new URL(request.url)
   const origin = request.headers.get('origin')
   if (origin !== null && origin !== 'dsh-app://app') return new Response(null, { status: 403 })
