@@ -149,8 +149,9 @@ export class SessionCommandController {
    */
   async selectModel(
     request: SessionSelectModelRequest,
-    { persistDefault = true }: { readonly persistDefault?: boolean } = {},
+    options: { readonly persistDefault?: boolean } = {},
   ): Promise<SessionSelectModelValue> {
+    const persistDefault = options.persistDefault ?? true
     const agent = await this.resolveAgent(request.sessionId)
     return this.agents.serializeImageAdmission(agent, async () => {
       try {
