@@ -9,7 +9,7 @@
  */
 
 import type { Message, ToolSchema } from '@deepseek-ai/dsh-llm'
-import {snapshotJsonValue} from '@deepseek-ai/dsh-util-values'
+import { snapshotJsonValue } from '@deepseek-ai/dsh-util-values'
 import { SessionLogOffset, SessionSeq } from './types.ts'
 import { KNOWN_SESSION_EVENT_TYPES, MESSAGE_PROJECTION_EVENT_TYPES } from './known-event-types.ts'
 import type {

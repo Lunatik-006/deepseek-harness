@@ -11,7 +11,7 @@
 
 import type {} from '@deepseek-ai/dsh-working-directory'
 import type { Context } from '@deepseek-ai/cordis'
-import type {FileSystem} from '@deepseek-ai/dsh-fs'
+import type { FileSystem } from '@deepseek-ai/dsh-fs'
 import { isDeepStrictEqual } from 'node:util'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -115,11 +115,17 @@ export function apply(ctx: Context, config: Config): void {
     claimed: readonly UserMessage[],
     pending: readonly UserMessage[],
     touchedPaths: readonly string[] = [],
-   ): Promise<UserMessage | undefined> => {
+  ): Promise<UserMessage | undefined> => {
     if(platformResolvedConfig.candidateSelection==='first-present'&&!platformBridge)throw new Error('First-present instructions require the exact Agent project context')
-    const platformProject=platformResolvedConfig.candidateSelection==='first-present'?await platformBridge?.resolve<FileSystem>(agent,signal,{actorMode:'execution'}):undefined
-    const resolved=platformProject&&platformBridge?{...platformResolvedConfig,...await platformBridge.instructionPolicy(agent,signal,platformProject)}:platformResolvedConfig
-    if(platformProject)touchedPaths=await Promise.all(touchedPaths.map(async path=>platformProject.fs.processPath(await platformProject.fs.resolve(path,{cwd:platformProject.cwd,signal}))))
+    const platformProject=platformResolvedConfig.candidateSelection==='first-present'
+      ? await platformBridge?.resolve<FileSystem>(agent,signal,{ actorMode:'execution' })
+      : undefined
+    const resolved=platformProject&&platformBridge
+      ? { ...platformResolvedConfig,...await platformBridge.instructionPolicy(agent,signal,platformProject) }
+      : platformResolvedConfig
+    if(platformProject)touchedPaths=await Promise.all(touchedPaths.map(async path=>(
+      platformProject.fs.processPath(await platformProject.fs.resolve(path,{ cwd:platformProject.cwd,signal }))
+    )))
     signal.throwIfAborted()
     if (resolved.maxBytes <= 0 || !Number.isFinite(resolved.maxBytes)) {
       return undefined
@@ -152,7 +158,9 @@ export function apply(ctx: Context, config: Config): void {
         projectRootMarkers: resolved.projectRootMarkers,
         maxBytes: resolved.maxBytes,
         maxSourceBytes: resolved.maxSourceBytes,
-        candidateSelection:resolved.candidateSelection,platformUserRoot:resolved.platformUserRoot,platformUserInstruction:resolved.platformUserInstruction,
+        candidateSelection: resolved.candidateSelection,
+        platformUserRoot: resolved.platformUserRoot,
+        platformUserInstruction: resolved.platformUserInstruction,
         instructionFileCandidates: resolved.instructionFileCandidates,
         localInstructionFileCandidates: resolved.localInstructionFileCandidates,
         projectRoot,

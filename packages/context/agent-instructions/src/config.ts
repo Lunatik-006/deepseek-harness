@@ -82,17 +82,17 @@ export function workspaceBaselineIdentity(
   cwd: string,
   projectRoot: string,
 ): string {
-	return JSON.stringify({
-		projectRoot: relative(cwd, projectRoot),
-		projectRootMarkers: config.projectRootMarkers,
-		maxBytes: config.maxBytes,
-        candidateSelection:config.candidateSelection,
-        platformUserRoot:config.platformUserRoot,
-        platformUserInstruction:config.platformUserInstruction?.absolutePath??null,
-        maxSourceBytes: config.maxSourceBytes,
-		instructionFileCandidates: config.instructionFileCandidates,
-		localInstructionFileCandidates: config.localInstructionFileCandidates
-	});
+  return JSON.stringify({
+    projectRoot: relative(cwd, projectRoot),
+    projectRootMarkers: config.projectRootMarkers,
+    maxBytes: config.maxBytes,
+    candidateSelection:config.candidateSelection,
+    platformUserRoot:config.platformUserRoot,
+    platformUserInstruction:config.platformUserInstruction?.absolutePath??null,
+    maxSourceBytes: config.maxSourceBytes,
+    instructionFileCandidates: config.instructionFileCandidates,
+    localInstructionFileCandidates: config.localInstructionFileCandidates,
+  })
 }
 
 /**
@@ -107,7 +107,9 @@ export function resolveConfig(config: Config): ResolvedConfig {
       ...config.candidateSelection === undefined ? {} : { candidateSelection: config.candidateSelection },
       ...config.projectRootMarkers === undefined ? {} : { projectRootMarkers: config.projectRootMarkers },
       ...config.instructionFileCandidates === undefined ? {} : { instructionFileCandidates: config.instructionFileCandidates },
-      ...config.localInstructionFileCandidates === undefined ? {} : { localInstructionFileCandidates: config.localInstructionFileCandidates },
+      ...config.localInstructionFileCandidates === undefined
+        ? {}
+        : { localInstructionFileCandidates: config.localInstructionFileCandidates },
     }),
     maxBytes: config.maxBytes,
     maxSourceBytes: config.maxSourceBytes ?? DEFAULT_MAX_SOURCE_BYTES,
@@ -129,13 +131,16 @@ export function resolveDiscoveryConfig(
   config: Pick<Config, 'projectRootMarkers' | 'instructionFileCandidates' | 'localInstructionFileCandidates'>
     & { dshHome?: string; agentsHome?: string; candidateSelection?: 'all' | 'first-present' | undefined } & PlatformInstructionPolicy,
 ): ResolvedDiscoveryConfig {
-    return {candidateSelection:config.candidateSelection??'all',platformUserRoot:config.platformUserRoot,platformUserInstruction:config.platformUserInstruction,
-		dshHome: resolveDshHome(config.dshHome),
-		agentsHome: resolveAgentsHome(config.agentsHome),
-		projectRootMarkers: config.projectRootMarkers ?? [...DEFAULT_PROJECT_ROOT_MARKERS],
-		instructionFileCandidates: resolveInstructionFileCandidates(config.instructionFileCandidates, DEFAULT_INSTRUCTION_FILE_CANDIDATES),
-		localInstructionFileCandidates: resolveInstructionFileCandidates(config.localInstructionFileCandidates, DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES)
-	};
+  return { candidateSelection:config.candidateSelection??'all',platformUserRoot:config.platformUserRoot,platformUserInstruction:config.platformUserInstruction,
+    dshHome: resolveDshHome(config.dshHome),
+    agentsHome: resolveAgentsHome(config.agentsHome),
+    projectRootMarkers: config.projectRootMarkers ?? [...DEFAULT_PROJECT_ROOT_MARKERS],
+    instructionFileCandidates: resolveInstructionFileCandidates(config.instructionFileCandidates, DEFAULT_INSTRUCTION_FILE_CANDIDATES),
+    localInstructionFileCandidates: resolveInstructionFileCandidates(
+      config.localInstructionFileCandidates,
+      DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES,
+    ),
+  }
 }
 
 function resolveInstructionFileCandidates(candidates: string[] | undefined, fallback: readonly string[]): string[] {

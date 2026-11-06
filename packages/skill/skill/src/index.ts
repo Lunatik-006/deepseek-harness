@@ -531,14 +531,18 @@ export class SkillRegistry extends Service {
       const project=this.ctx.get('platformProjectConfig')
       const scope=options.scope
       const scoped=scope!==undefined&&'session' in scope&&scope.session!==undefined&&scope.session!==null
-      let discriminator: string | undefined
-      if (project !== undefined) discriminator = scoped && scope !== undefined ? await project.skillCacheDiscriminator(scope, options.signal) : 'bundled-only'
-      const key = this.collectCacheKey(options.cwd, scopeChainOf(options.scope), revision)+(project?'\0'+discriminator:'')
+      const discriminator = project === undefined
+        ? undefined
+        : scoped
+          ? await project.skillCacheDiscriminator(scope, options.signal)
+          : 'bundled-only'
+      const key = this.collectCacheKey(options.cwd, scopeChainOf(options.scope), revision)
+        + (discriminator === undefined ? '' : `\0${discriminator}`)
       const cached = this.collectCache.get(key)
       if (cached !== undefined) return { entries: cached, cacheable: true }
 
       const fresh = await this.collectFresh(options)
-      const result=project&&!scoped?{...fresh,entries:new Map([...fresh.entries].filter(([,entry])=>entry.candidate.source==='bundled'))}:fresh
+      const result=project&&!scoped?{ ...fresh,entries:new Map([...fresh.entries].filter(([,entry])=>entry.candidate.source==='bundled')) }:fresh
       throwIfAborted(options.signal)
       if (revision !== this.revision) {
         if (attempt < MAX_COLLECT_ATTEMPTS) {

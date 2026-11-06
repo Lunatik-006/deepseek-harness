@@ -351,7 +351,9 @@ export type ToolExecutionResult = ToolExecutionSuccess | ToolExecutionFailure
  * the canonical cancellation result without presenting a policy denial; `ask`
  * runs only after an approval service returns `allowed-once` and otherwise
  * denies; its `reason` is the audited approval reason and its optional
- * `displayReason` is the localized prompt text. Input rewriting is schema validated and recorded before approval and dispatch. Original model call arguments remain immutable.
+ * `displayReason` is the localized prompt text. Input rewriting is schema
+ * validated and recorded before approval and dispatch; original model call
+ * arguments remain immutable.
  */
 export type PreToolDecision =
   | { kind: 'allow'; updatedInput?: JsonValue }

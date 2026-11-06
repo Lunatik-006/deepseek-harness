@@ -84,6 +84,8 @@ export interface PlatformProjectConfigService {
     options?: { readonly messages?: readonly unknown[] | undefined },
   ): T
   /** Build an MCP transport in the Agent's exact subprocess realm; `undefined` declines. */
+  // The caller chooses the transport type; the MCP SDK must stay out of dsh-agent.
+  // oxlint-disable-next-line typescript/no-unnecessary-type-parameters
   createMcpTransport<T>(agent: ScopeKey, config: unknown): T | undefined
 }
 

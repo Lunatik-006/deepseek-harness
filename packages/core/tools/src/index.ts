@@ -24,7 +24,7 @@ declare module '@deepseek-ai/dsh-system-prompt' {
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
-    'tool-input-updated': {kind: 'tool-input-updated'; callId: ToolCallId} & ContextFormed
+    'tool-input-updated': { kind: 'tool-input-updated'; callId: ToolCallId } & ContextFormed
 
     /** Tool availability changes supplied by the tool registry. */
     'tool-registry': { kind: 'tool-registry' }

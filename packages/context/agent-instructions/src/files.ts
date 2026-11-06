@@ -300,69 +300,76 @@ async function allExistingInstructionFiles(
   root: string,
   instructionFileCandidates: readonly string[],
   fileSystem?: FileSystem,
-  signal?: AbortSignal, selection?: 'all' | 'first-present'
+  signal?: AbortSignal, selection?: 'all' | 'first-present',
 ): Promise<DiscoveredInstructionFile[]> {
-	const found: DiscoveredInstructionFile[] = [];
-	for (const candidate of instructionFileCandidates) {
-		const path = join(dir, candidate);
-		const probe = await statFile(path, fileSystem, signal);
-        if(selection==='first-present'&&probe.kind==='unavailable')throw new Error('Preferred instruction metadata is unavailable: '+path);
-        switch (probe.kind) {
-			case "present":
-				found.push({
-					absolutePath: path,
-					displayPath: relativeDisplay(root, path),
-					...probe.info
-				});
-				if(selection==='first-present')return found;
-				continue;
-			case "absent":
-			case "unavailable": continue;
-			/* v8 ignore next 2 -- StatFileProbe is closed; this arm only makes adding a kind a compile error. */
-			default: assertNever(probe, "StatFileProbe");
-		}
-	}
-	return found;
+  const found: DiscoveredInstructionFile[] = []
+  for (const candidate of instructionFileCandidates) {
+    const path = join(dir, candidate)
+    const probe = await statFile(path, fileSystem, signal)
+    if(selection==='first-present'&&probe.kind==='unavailable')throw new Error('Preferred instruction metadata is unavailable: '+path)
+    switch (probe.kind) {
+      case 'present':
+        found.push({
+          absolutePath: path,
+          displayPath: relativeDisplay(root, path),
+          ...probe.info,
+        })
+        if(selection==='first-present')return found
+        continue
+      case 'absent':
+      case 'unavailable': continue
+      /* v8 ignore next 2 -- StatFileProbe is closed; this arm only makes adding a kind a compile error. */
+      default: assertNever(probe, 'StatFileProbe')
+    }
+  }
+  return found
 }
 
 async function discoverInstructionFiles(
   options: DiscoverOptions,
   fileSystem?: FileSystem,
 ): Promise<DiscoveredInstructionFile[]> {
-	const config = resolveDiscoveryConfig(options);
-	const files: DiscoveredInstructionFile[] = [];
-	const seen = /* @__PURE__ */ new Set<string>();
-	const addFile = (file: DiscoveredInstructionFile): void => {
-		if (seen.has(file.absolutePath)) return;
-		seen.add(file.absolutePath);
-		files.push(file);
-	};
-	if(config.candidateSelection==='first-present'&&config.platformUserInstruction) {
-        const selected=config.platformUserInstruction,probe=await statFile(selected.absolutePath,fileSystem,options.signal);
-        if(probe.kind!=='present')throw new Error('Selected user instruction is unavailable');
-        addFile({...selected,...probe.info});
+  const config = resolveDiscoveryConfig(options)
+  const files: DiscoveredInstructionFile[] = []
+  const seen = /* @__PURE__ */ new Set<string>()
+  const addFile = (file: DiscoveredInstructionFile): void => {
+    if (seen.has(file.absolutePath)) return
+    seen.add(file.absolutePath)
+    files.push(file)
+  }
+  if(config.candidateSelection==='first-present'&&config.platformUserInstruction) {
+    const selected=config.platformUserInstruction,probe=await statFile(selected.absolutePath,fileSystem,options.signal)
+    if(probe.kind!=='present')throw new Error('Selected user instruction is unavailable')
+    addFile({ ...selected,...probe.info })
+  }
+  for (const root of config.candidateSelection==='first-present'?[]:userGlobalRoots(config)) {
+    const absolutePath = join(root.home, USER_GLOBAL_FILE)
+    const probe = await statFile(absolutePath, fileSystem, options.signal)
+    switch (probe.kind) {
+      case 'present':
+        addFile({
+          absolutePath,
+          displayPath: `${root.display}/${USER_GLOBAL_FILE}`,
+          ...probe.info,
+        })
+        continue
+      case 'absent':
+      case 'unavailable': continue
+      /* v8 ignore next 2 -- StatFileProbe is closed; this arm only makes adding a kind a compile error. */
+      default: assertNever(probe, 'StatFileProbe')
     }
-    for (const root of config.candidateSelection==='first-present'?[]:userGlobalRoots(config)) {
-		const absolutePath = join(root.home, USER_GLOBAL_FILE);
-		const probe = await statFile(absolutePath, fileSystem, options.signal);
-		switch (probe.kind) {
-			case "present":
-				addFile({
-					absolutePath,
-					displayPath: `${root.display}/${USER_GLOBAL_FILE}`,
-					...probe.info
-				});
-				continue;
-			case "absent":
-			case "unavailable": continue;
-			/* v8 ignore next 2 -- StatFileProbe is closed; this arm only makes adding a kind a compile error. */
-			default: assertNever(probe, "StatFileProbe");
-		}
-	}
-	const cwd = resolve(options.cwd);
-	const projectRoot = options.projectRoot ?? await findProjectRoot(cwd, config.projectRootMarkers, fileSystem, options.signal);
-	for (const dir of ancestorChain(projectRoot, cwd)) for (const candidates of [config.instructionFileCandidates, config.localInstructionFileCandidates]) for (const file of await allExistingInstructionFiles(dir, projectRoot, candidates, fileSystem, options.signal, config.candidateSelection)) addFile(file);
-	return files;
+  }
+  const cwd = resolve(options.cwd)
+  const projectRoot = options.projectRoot ?? await findProjectRoot(cwd, config.projectRootMarkers, fileSystem, options.signal)
+  for (const dir of ancestorChain(projectRoot, cwd)) {
+    for (const candidates of [config.instructionFileCandidates, config.localInstructionFileCandidates]) {
+      const found = await allExistingInstructionFiles(
+        dir, projectRoot, candidates, fileSystem, options.signal, config.candidateSelection,
+      )
+      for (const file of found) addFile(file)
+    }
+  }
+  return files
 }
 
 /**
@@ -475,7 +482,7 @@ export async function loadBaselineInstructionSet(
   const discovered = await discoverInstructionFiles(options, fileSystem)
   const loaded: LoadedInstructionFile[] = []
   for (const file of discovered) {
-    const content = await readBounded(file, config.maxSourceBytes, fileSystem, options.signal,{enabled:config.candidateSelection==='first-present',userRoot:config.platformUserRoot})
+    const content = await readBounded(file, config.maxSourceBytes, fileSystem, options.signal,{ enabled:config.candidateSelection==='first-present',userRoot:config.platformUserRoot })
     if (content !== undefined) {
       loaded.push({
         absolutePath: file.absolutePath,
@@ -527,14 +534,14 @@ export function scopeInstructionFile(
   projectRoot: string,
   resolved: ResolvedDiscoveryConfig,
 ): InstructionFile {
-    if(resolved.candidateSelection==='first-present'&&decodeScopeKey(scope).directory===USER_GLOBAL_DIRECTORY&&resolved.platformUserInstruction)return resolved.platformUserInstruction;
-	const { directory, candidateName } = decodeScopeKey(scope);
-	const globalRoot = userGlobalRoots(resolved).find((root) => root.directory === directory);
-	const absolutePath = join(globalRoot?.home ?? (directory === "." ? projectRoot : join(projectRoot, directory)), candidateName);
-	return {
-		absolutePath,
-		displayPath: globalRoot === void 0 ? relativeDisplay(projectRoot, absolutePath) : `${globalRoot.display}/${candidateName}`
-	};
+  if(resolved.candidateSelection==='first-present'&&decodeScopeKey(scope).directory===USER_GLOBAL_DIRECTORY&&resolved.platformUserInstruction)return resolved.platformUserInstruction
+  const { directory, candidateName } = decodeScopeKey(scope)
+  const globalRoot = userGlobalRoots(resolved).find(root => root.directory === directory)
+  const absolutePath = join(globalRoot?.home ?? (directory === '.' ? projectRoot : join(projectRoot, directory)), candidateName)
+  return {
+    absolutePath,
+    displayPath: globalRoot === void 0 ? relativeDisplay(projectRoot, absolutePath) : `${globalRoot.display}/${candidateName}`,
+  }
 }
 
 /**
@@ -553,41 +560,43 @@ export async function probeScopeInstruction(
   fileSystem: FileSystem,
   signal?: AbortSignal,
 ): Promise<ScopeInstructionProbe> {
-    if(resolved.candidateSelection==='first-present') {
-        const {directory,candidateName}=decodeScopeKey(scope);
-        if(isUserGlobalDirectory(directory)) {
-            if(directory!==USER_GLOBAL_DIRECTORY||!resolved.platformUserInstruction)return {kind:'absent'};
-        } else {
-            const candidates=resolved.localInstructionFileCandidates.includes(candidateName)?resolved.localInstructionFileCandidates:resolved.instructionFileCandidates;
-            for(const prior of candidates) {
-                if(prior===candidateName)break;
-                const alternative=scopeInstructionFile(candidateScopeKey(directory,prior),projectRoot,resolved);
-                const probe=await statFile(alternative.absolutePath,fileSystem,signal);
-                if(probe.kind==='present')return {kind:'absent'};
-                if(probe.kind==='unavailable')throw new Error('Preferred instruction metadata is unavailable: '+alternative.absolutePath);
-            }
-        }
+  if(resolved.candidateSelection==='first-present') {
+    const { directory,candidateName }=decodeScopeKey(scope)
+    if(isUserGlobalDirectory(directory)) {
+      if(directory!==USER_GLOBAL_DIRECTORY||!resolved.platformUserInstruction)return { kind:'absent' }
+    } else {
+      const candidates = resolved.localInstructionFileCandidates.includes(candidateName)
+        ? resolved.localInstructionFileCandidates
+        : resolved.instructionFileCandidates
+      for(const prior of candidates) {
+        if(prior===candidateName)break
+        const alternative=scopeInstructionFile(candidateScopeKey(directory,prior),projectRoot,resolved)
+        const probe=await statFile(alternative.absolutePath,fileSystem,signal)
+        if(probe.kind==='present')return { kind:'absent' }
+        if(probe.kind==='unavailable')throw new Error('Preferred instruction metadata is unavailable: '+alternative.absolutePath)
+      }
     }
-	const candidate = scopeInstructionFile(scope, projectRoot, resolved);
-	let target: FsTarget;
-	let info: FsInfo | undefined;
-	try {
-		target = await fileSystem.resolve(candidate.absolutePath, signalOptions(signal));
-		info = await fileSystem.stat(target, signal);
-	} catch {
-		signal?.throwIfAborted();
-		return { kind: "unavailable" };
-	}
-	if (info?.type !== "file") return { kind: "absent" };
-	return {
-		kind: "present",
-		file: {
-			...candidate,
-			target,
-			version: info.version,
-			...info.size === void 0 ? {} : { size: info.size }
-		}
-	};
+  }
+  const candidate = scopeInstructionFile(scope, projectRoot, resolved)
+  let target: FsTarget
+  let info: FsInfo | undefined
+  try {
+    target = await fileSystem.resolve(candidate.absolutePath, signalOptions(signal))
+    info = await fileSystem.stat(target, signal)
+  } catch {
+    signal?.throwIfAborted()
+    return { kind: 'unavailable' }
+  }
+  if (info?.type !== 'file') return { kind: 'absent' }
+  return {
+    kind: 'present',
+    file: {
+      ...candidate,
+      target,
+      version: info.version,
+      ...info.size === void 0 ? {} : { size: info.size },
+    },
+  }
 }
 
 /**
@@ -602,53 +611,70 @@ export async function readScopeInstruction(
   file: ProbedInstructionFile,
   maxSourceBytes: number,
   fileSystem: FileSystem,
-  signal?: AbortSignal, imports?: PlatformImportOptions
+  signal?: AbortSignal, imports?: PlatformImportOptions,
 ): Promise<LoadedInstructionFile | undefined> {
-	const content = await readBounded(file, maxSourceBytes, fileSystem, signal, imports);
-	if (content === void 0) return void 0;
-	return {
-		absolutePath: file.absolutePath,
-		displayPath: file.displayPath,
-		content,
-		version: file.version
-	};
+  const content = await readBounded(file, maxSourceBytes, fileSystem, signal, imports)
+  if (content === void 0) return void 0
+  return {
+    absolutePath: file.absolutePath,
+    displayPath: file.displayPath,
+    content,
+    version: file.version,
+  }
 }
 
-interface PlatformImportOptions {enabled?:boolean|undefined;userRoot?:string|null|undefined}
-interface PlatformImportState {stack:Set<string>;included:Set<string>;remaining:number}
-async function platformImportedInstruction(file:DiscoveredInstructionFile,limit:number,fileSystem:FileSystem|undefined,signal:AbortSignal|undefined,options:PlatformImportOptions,state:PlatformImportState={stack:new Set(),included:new Set(),remaining:limit}):Promise<string> {
-  const key=file.target?.targetKey??file.absolutePath;
-  if(state.stack.has(key))throw new Error('Instruction import cycle at '+file.absolutePath);
-  if(state.included.has(key))return '';
-  state.stack.add(key);
+interface PlatformImportOptions { enabled?:boolean|undefined;userRoot?:string|null|undefined }
+interface PlatformImportState { stack:Set<string>;included:Set<string>;remaining:number }
+async function platformImportedInstruction(
+  file: DiscoveredInstructionFile,
+  limit: number,
+  fileSystem: FileSystem | undefined,
+  signal: AbortSignal | undefined,
+  options: PlatformImportOptions,
+  state: PlatformImportState = { stack: new Set(), included: new Set(), remaining: limit },
+): Promise<string> {
+  const key=file.target?.targetKey??file.absolutePath
+  if(state.stack.has(key))throw new Error('Instruction import cycle at '+file.absolutePath)
+  if(state.included.has(key))return ''
+  state.stack.add(key)
   try {
-    const raw=await readBoundedRaw(file,state.remaining,fileSystem,signal);
-    if(raw===undefined)throw new Error('Instruction import is unavailable or exceeds its source budget: '+file.absolutePath);
-    state.remaining-=Buffer.byteLength(raw,'utf8');state.included.add(key);
-    const imports=[];let fence=false;
+    const raw=await readBoundedRaw(file,state.remaining,fileSystem,signal)
+    if(raw===undefined)throw new Error('Instruction import is unavailable or exceeds its source budget: '+file.absolutePath)
+    state.remaining-=Buffer.byteLength(raw,'utf8');state.included.add(key)
+    const imports=[];let fence=false
     for(const line of raw.split(/\r?\n/)) {
-      if(/^\s*(?:```|~~~)/.test(line)){fence=!fence;continue;}
-      if(fence)continue;
-      const plain=line.replace(/`[^`]*`/g,'');
+      if(/^\s*(?:```|~~~)/.test(line)){fence=!fence;continue}
+      if(fence)continue
+      const plain=line.replace(/`[^`]*`/g,'')
       for(const match of plain.matchAll(/(?:^|\s)@(?:(?:"([^"]+)")|(?:'([^']+)')|([^\s<>]+))/g)) {
-        const name=match[1]??match[2]??match[3];
-        if(name===undefined)continue;
+        const name=match[1]??match[2]??match[3]
+        if(name===undefined)continue
         const path=name.startsWith('~/')
-          ? options.userRoot?resolve(options.userRoot,name.slice(2)):(()=>{throw new Error('Instruction home import requires an explicit user configuration root');})()
-          : resolve(dirname(file.absolutePath),name);
-        const probe=await statFile(path,fileSystem,signal);
-        if(probe.kind==='unavailable')throw new Error('Instruction import metadata is unavailable: '+path);
+          ? options.userRoot?resolve(options.userRoot,name.slice(2)):(()=>{throw new Error('Instruction home import requires an explicit user configuration root')})()
+          : resolve(dirname(file.absolutePath),name)
+        const probe=await statFile(path,fileSystem,signal)
+        if(probe.kind==='unavailable')throw new Error('Instruction import metadata is unavailable: '+path)
         if(probe.kind==='absent') {
-          if(plain.trim().startsWith('@'))throw new Error('Instruction import does not exist: '+path);
-          continue; // Ordinary prose mentions are not imports unless they name a file.
+          if(plain.trim().startsWith('@'))throw new Error('Instruction import does not exist: '+path)
+          continue // Ordinary prose mentions are not imports unless they name a file.
         }
-        const body=await platformImportedInstruction({absolutePath:path,displayPath:path,...probe.info},limit,fileSystem,signal,options,state);
-        if(body)imports.push('Imported instructions from: '+path+'\n\n'+body);
+        const body=await platformImportedInstruction(
+          { absolutePath:path,displayPath:path,...probe.info },limit,fileSystem,signal,options,state,
+        )
+        if(body)imports.push('Imported instructions from: '+path+'\n\n'+body)
       }
     }
-    return [raw,...imports].join('\n\n');
-  } finally {state.stack.delete(key);}
+    return [raw,...imports].join('\n\n')
+  } finally {state.stack.delete(key)}
 }
-async function readBounded(file:DiscoveredInstructionFile,limit:number,fileSystem:FileSystem|undefined,signal:AbortSignal|undefined,imports?:PlatformImportOptions):Promise<string|undefined> {
-  return imports?.enabled?platformImportedInstruction(file,limit,fileSystem,signal,imports):readBoundedRaw(file,limit,fileSystem,signal);
+async function readBounded(
+  file: DiscoveredInstructionFile,
+  limit: number,
+  fileSystem: FileSystem | undefined,
+  signal: AbortSignal | undefined,
+  imports?: PlatformImportOptions,
+): Promise<string | undefined> {
+  return imports?.enabled
+    ? platformImportedInstruction(file,limit,fileSystem,signal,imports)
+    : readBoundedRaw(file,limit,fileSystem,signal)
 }

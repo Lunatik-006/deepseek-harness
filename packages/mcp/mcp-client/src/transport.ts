@@ -7,9 +7,9 @@
  */
 
 import type { Transport } from '@modelcontextprotocol/client'
-import type {Context} from '@deepseek-ai/cordis'
-import type {Agent} from '@deepseek-ai/dsh-agent'
-import {scopeOf} from '@deepseek-ai/dsh-scope'
+import type { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'

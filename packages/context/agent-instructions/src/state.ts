@@ -405,7 +405,7 @@ export async function reconcileInstructionContext(
           && hasKeptTrimmed(group, cached.trimmedDigest)) continue
       }
 
-      const file = await readScopeInstruction(probedFile, resolved.maxSourceBytes, fileSystem, options.signal,{enabled:resolved.candidateSelection==='first-present',userRoot:resolved.platformUserRoot})
+      const file = await readScopeInstruction(probedFile, resolved.maxSourceBytes, fileSystem, options.signal,{ enabled:resolved.candidateSelection==='first-present',userRoot:resolved.platformUserRoot })
       if (file === undefined) {
         rollbackGroup()
         break
