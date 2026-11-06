@@ -203,7 +203,8 @@ export class HostConnectionService extends Service implements HostConnectionHand
     if (!registration || this.disposed || process.platform !== "win32") return false;
     const socket = request.socket;
     const loopback = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
-    if (!socket || !loopback.has(socket.remoteAddress) || !loopback.has(socket.localAddress) || !Number.isInteger(socket.localPort)) return false;
+    const remote = socket?.remoteAddress, local = socket?.localAddress;
+    if (!socket || remote === undefined || local === undefined || !loopback.has(remote) || !loopback.has(local) || !Number.isInteger(socket.localPort)) return false;
     const read = (name: string): string | undefined => request.headers instanceof Headers ? request.headers.get(name) ?? undefined : typeof request.headers[name] === "string" ? request.headers[name] : undefined;
     const names = request.headers instanceof Headers ? [...request.headers.keys()] : Object.keys(request.headers);
     if (names.some(name => /^(?:forwarded|via|x-real-ip|x-original-host|x-original-url|x-dsh-pocket)$/i.test(name) || /^(?:x-forwarded-|tailscale-|cf-)/i.test(name))) return false;
@@ -255,14 +256,15 @@ export class HostConnectionService extends Service implements HostConnectionHand
     if (this.disposed || !peer || peer.signal.aborted) throw new Error("A live human API Peer is required");
     if (this.browserAdmission?.acceptsPeer?.(peer) !== true) throw new Error("The API Peer is not owned by the registered admission provider");
     const server = this.owner.get("webServer");
-    if (!server || !Number.isInteger(server.port) || server.port <= 0) throw new Error("Native application listener is unavailable");
+    const port = server?.port;
+    if (server === undefined || port === undefined || !Number.isInteger(port) || port <= 0) throw new Error("Native application listener is unavailable");
     const existing = this.peers.get(peer.id);
     if (existing && existing.peer !== peer) throw new Error("Native API Peer identity collision");
     if (!existing) {
       this.peers.set(peer.id, { peer, ownsSocket: false, platformActor: true, sharedBrowser: true });
       peer.signal.addEventListener("abort", () => { if (this.peers.get(peer.id)?.peer === peer) this.peers.delete(peer.id); }, { once: true });
     }
-    return this.browserAuth.issueActorApiCredential("127.0.0.1:" + server.port, peer.id, server.protocol === "https:");
+    return this.browserAuth.issueActorApiCredential("127.0.0.1:" + port, peer.id, server.protocol === "https:");
   }
   private publishDesktopLocalPeer(interactions: ConnectionInteractions, credential: NativeApiCredentialSeed): PeerId {
     if (!this.desktopLocalOwner || !credential || !Number.isFinite(credential.expiresAt)) throw new Error("Desktop native credential is required");
