@@ -1043,11 +1043,11 @@ export class LlmRuntime extends TypertRemoteService {
   }
 
   /**
-   * Resolve the current execution-world read path of one durable file
-   * reference through the mounted attachment and filesystem providers.
-   */
-  /** Register a scoped execution-path resolver without importing an Agent into LLM core.
-   * undefined declines, null handles an unavailable environment, a string names its process path.
+   * Register a scoped execution-path resolver without importing an Agent into LLM core.
+   * @param id - unique resolver identity; a duplicate registration is refused.
+   * @param resolver - returns a process path, `null` for a handled unavailable environment,
+   *   or `undefined` to decline.
+   * @returns disposer removing this resolver.
    */
   registerFileReadPathResolver(id:string,resolver:(ref:FileAttachmentRef)=>string|null|undefined):()=>void {
     const dispose=this.ctx.effect(function* (this:LlmRuntime) {
@@ -1058,6 +1058,10 @@ export class LlmRuntime extends TypertRemoteService {
     }.bind(this),'llm.registerFileReadPathResolver()')
     return()=>void dispose()
   }
+  /**
+   * Resolve the current execution-world read path of one durable file
+   * reference through the registered resolvers and the mounted providers.
+   */
   private fileReadPath(ref: FileAttachmentRef): string | undefined {
     for(const resolver of this.fileReadPathResolvers.values()) {
       const path=resolver(ref)

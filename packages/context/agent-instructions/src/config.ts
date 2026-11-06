@@ -54,6 +54,9 @@ export interface PlatformInstructionPolicy {
   platformUserRoot?: string | null | undefined
   platformUserInstruction?: { absolutePath: string; displayPath: string } | null | undefined
 }
+/**
+ * Discovery defaults with the platform instruction policy applied for the active Agent realm.
+ */
 export interface ResolvedDiscoveryConfig extends PlatformInstructionPolicy {
   candidateSelection: 'all' | 'first-present'
 

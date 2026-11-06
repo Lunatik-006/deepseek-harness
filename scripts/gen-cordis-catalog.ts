@@ -223,6 +223,8 @@ export const SERVICE_WALK_EXEMPTIONS: Record<string, string> = {
   sidebarRightTabs: 'client-side right-Sidebar tab-type registry — packages/client/ui-sidebar-right/README.md owns the API',
   documentPreviews: 'client-side document renderer registry — docs/subsystems/sidebar-right.md owns the API',
   platformExecution: 'optional deployment-provided directory bridge (ExecutionWorkspaceDirectoryBridge | undefined); the platform execution service installs it — packages/workspace/workspace/execution-directories.md owns the contract',
+  platformProjectConfig: 'optional platform-composition project realm bridge (PlatformProjectConfigService | undefined); the platform project service installs it — packages/core/agent/src/platform-services.ts owns the contract',
+  platformSkillInvocation: 'optional platform-composition native-skill dispatcher (PlatformSkillInvocationService | undefined); the platform skill bridge installs it — packages/core/agent/src/platform-services.ts owns the contract',
 }
 
 /**

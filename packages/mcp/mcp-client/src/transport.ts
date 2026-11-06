@@ -29,6 +29,7 @@ function buildChildEnv(extra: Record<string, string>): Record<string, string> {
  * Create an MCP transport from the resolved plugin config.
  *
  * @param config - Resolved plugin config discriminated on `transport`.
+ * @param ctx - requesting context used to resolve the exact Agent realm; omitted keeps the plain SDK transport.
  * @returns A connected-ready MCP Transport (stdio or Streamable HTTP).
  */
 export function createTransport(config: Config,ctx?:Context): Transport {

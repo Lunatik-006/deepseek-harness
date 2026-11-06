@@ -605,6 +605,7 @@ export async function probeScopeInstruction(
  * @param maxSourceBytes - maximum UTF-8 bytes accepted from the source.
  * @param fileSystem - provider used for the streaming read.
  * @param signal - cancellation for provider streaming.
+ * @param imports - optional execution-world import/read policy.
  * @returns loaded content with the probed version, or undefined when unavailable.
  */
 export async function readScopeInstruction(

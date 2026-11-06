@@ -1170,6 +1170,15 @@ async resolveCallConfig(config: LlmCallConfig, signal?: AbortSignal): Promise<Ll
 async prepareCall( config: LlmCallConfig, signal?: AbortSignal, configure?: ConfigureCall, ): Promise<PreparedLlmCall>
 
 /**
+ * Register a scoped execution-path resolver without importing an Agent into LLM core.
+ * @param id - unique resolver identity; a duplicate registration is refused.
+ * @param resolver - returns a process path, `null` for a handled unavailable environment,
+ *   or `undefined` to decline.
+ * @returns disposer removing this resolver.
+ */
+registerFileReadPathResolver(id:string,resolver:(ref:FileAttachmentRef)=>string|null|undefined):()=>void
+
+/**
  * Stream one model call as raw chunks (token-level deltas). Replay state is
  * retained only when the same adapter instance owns its historical provider
  * and the target provider. Final adapter selection remains fixed through

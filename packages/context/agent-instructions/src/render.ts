@@ -512,4 +512,11 @@ export function renderAgentInstructions(
   return renderAgentInstructionSet(files, options).rendered
 }
 
-export function platformAbsoluteInstruction(path:string):boolean {return /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(path)}
+/**
+ * Whether a model-facing path names an absolute process path in either dialect.
+ * @param path - candidate display path.
+ * @returns true for a drive-letter, UNC or POSIX absolute path.
+ */
+export function platformAbsoluteInstruction(path:string):boolean {
+  return /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(path)
+}
