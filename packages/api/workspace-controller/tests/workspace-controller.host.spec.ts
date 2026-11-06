@@ -107,9 +107,9 @@ function stageDir(root: string, name: string): string {
   return path
 }
 
-async function nextFrame(
-  iterator: AsyncIterator<WorkspaceFollowFrame>,
-): Promise<WorkspaceFollowFrame> {
+async function nextFrame<Frame>(
+  iterator: AsyncIterator<Frame>,
+): Promise<Frame> {
   const next = await iterator.next()
   if (next.done === true) throw new Error('Workspace stream ended before the expected frame')
   return next.value
@@ -443,6 +443,35 @@ describe('WorkspaceController follow', () => {
 
     abort.abort()
     await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined })
+  })
+
+  it('re-sends the filtered baseline when access invalidation arrives', async () => {
+    const { controller, ctx, root } = await harness()
+    const abort = new AbortController()
+    const iterator = controller.follow(abort.signal)[Symbol.asyncIterator]()
+    try {
+      await expect(nextFrame(iterator)).resolves.toEqual({
+        type: 'baseline',
+        value: { items: [], archivedSessionIds: [], pinnedSessionIds: [] },
+      })
+      const created = await controller.create({ path: stageDir(root, 'access-refresh') })
+      await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'upsert' })
+      await expect(nextFrame(iterator)).resolves.toMatchObject({ type: 'order' })
+      // A binding change is delivered as the complete filtered baseline, not
+      // as an increment a Client could not apply to a newly hidden Workspace.
+      ctx.emit('remote-access/invalidated')
+      await expect(nextFrame(iterator)).resolves.toMatchObject({
+        type: 'replace',
+        value: {
+          items: [{ workspaceId: created.workspace.workspaceId }],
+          archivedSessionIds: [],
+          pinnedSessionIds: [],
+        },
+      })
+    } finally {
+      abort.abort()
+      await iterator.return?.()
+    }
   })
 
   it('follows only the Workspaces and Sessions a non-owner may follow', async () => {
