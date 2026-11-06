@@ -1,0 +1,34 @@
+# Configured execution directories
+
+`platformExecution.resolveWorkspaceDirectory(path)` is an optional directory-identity callback. It
+returns `undefined` only for paths outside its configured roots; otherwise it returns
+`{path, status: 'ok' | 'missing-dir'}` or rejects. A managed result or error never triggers Host
+`realpath`, `stat` or `mkdir` fallback. The returned directory uses its actual executor spelling:
+normalized absolute POSIX paths or fully qualified Windows drive/UNC paths. Volume roots, NUL,
+relative spellings, unknown statuses and non-normalized paths are rejected.
+
+Workspace creation/lookup, entity attachment/status, default initialization, persisted-header
+indexing and native Agent directory creation use the same callback. Native Host operations remain
+unchanged for unmanaged paths. After provider readiness, `refreshExecutionDirectories()` rebuilds
+derived header/live indices through the registry's existing operation queue; it does not replace
+durable workspace identities, headers or Session history. Native entity status retains its
+two-value availability projection and per-row error handling, so `missing-dir` is not proof of
+deletion.
+
+Provider rejection and a managed `missing-dir` result raise `ExecutionWorkspaceUnavailableError`
+with the original failure/result retained as `cause`. Header indexing records these sessions as
+missing/pending candidates, so an unrelated workspace mutation cannot prune their existing account
+membership. Existing attached sessions remain attached; a new attachment or Agent creation still
+requires an available verified directory. Invalid return fields and corrupt/nonmatching headers
+retain native invalid handling instead of becoming pending candidates. Managed failure never
+retries against the Host filesystem.
+
+The bridge dynamically reads the existing platform service and creates no startup dependency,
+executor, filesystem router, model tool, Host mirror directory or workspace database. The execution
+provider owns canonical-root uniqueness and readiness; the native integration validates the
+returned directory identity.
+
+Session-local model selection also keeps the caller's persistence choice explicit: the public
+native entry captures its verified principal and passes internal `persistDefault: false` for
+`platform-human`; default owner/direct command behavior still persists the Host default. Session
+model validation and next-request selection remain native.
