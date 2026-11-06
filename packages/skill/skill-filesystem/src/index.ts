@@ -18,6 +18,7 @@ import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
 import { parse as parseYaml } from 'yaml'
 import type { FileSystem, FsDirEntry, FsTarget } from '@deepseek-ai/dsh-fs'
+import type { PlatformProjectContext } from '@deepseek-ai/dsh-agent'
 import { canonicalizeWatchPath, resolveAgentsHome, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import {
   BUNDLED_SKILL_RANK,
@@ -41,15 +42,16 @@ const DEFAULT_WATCH_STABILITY_THRESHOLD_MS = 200
 const DEFAULT_WATCH_POLL_INTERVAL_MS = 100
 const DEFAULT_WATCH_MAX_PROJECTS = 128
 
-interface PlatformSkillProject {fs:FileSystem;cwd:string;checkoutRoot:string;userConfigRoot?:string;executorId?:string}
-interface PlatformSkillProjectBridge {resolve(scope:NonNullable<SkillLookupOptions['scope']>,signal?:AbortSignal):Promise<PlatformSkillProject>}
-async function platformSkillProject(ctx:Context,options:SkillLookupOptions):Promise<PlatformSkillProject|undefined> {
+/** Context surface the realm-scoped discovery helpers read: filesystem service plus logging. */
+type PlatformSkillRealm = Pick<Context, 'get' | 'logger'>
+
+async function platformSkillProject(ctx:Context,options:SkillLookupOptions):Promise<PlatformProjectContext<FileSystem>|undefined> {
   const scope=options.scope
-  const bridge=ctx.get('platformProjectConfig' as string) as unknown as PlatformSkillProjectBridge|undefined
-  return scope&&'session' in scope&&bridge?bridge.resolve(scope,options.signal):undefined
+  const bridge=ctx.get('platformProjectConfig')
+  return scope&&'session' in scope?bridge?.resolve<FileSystem>(scope,options.signal):undefined
 }
-function platformSkillReadContext(ctx:Context,project:PlatformSkillProject|undefined):Context {
-  return project?{get:(name:string)=>name==='fs'?project.fs:ctx.get(name),logger:ctx.logger} as unknown as Context:ctx
+function platformSkillReadContext(ctx:Context,project:PlatformProjectContext<FileSystem>|undefined):PlatformSkillRealm {
+  return project?{get:(name:string)=>name==='fs'?project.fs:ctx.get(name),logger:ctx.logger}:ctx
 }
 
 export const name = 'skill-filesystem'
@@ -197,7 +199,7 @@ export class FileSystemSkillProvider implements SkillProvider {
     const project=await platformSkillProject(this.ctx,options)
     const realm=platformSkillReadContext(this.ctx,project)
     const discoveredRoots = await this.roots(project?.cwd??options.cwd,realm,project)
-    const roots=this.ctx.get('platformProjectConfig' as string)&&!(options.scope as {session?:unknown}|undefined)?.session?discoveredRoots.filter(root=>root.source==='bundled'):discoveredRoots
+    const roots=this.ctx.get('platformProjectConfig')&&!(options.scope as {session?:unknown}|undefined)?.session?discoveredRoots.filter(root=>root.source==='bundled'):discoveredRoots
     let complete = true
     try {
       if(!project?.executorId)await this.watchManager.observeRoots(roots)
@@ -264,7 +266,7 @@ export class FileSystemSkillProvider implements SkillProvider {
     return this.disposal
   }
 
-  private async roots(cwd: string | undefined,realm:Context=this.ctx,project?:PlatformSkillProject): Promise<SkillRoot[]> {
+  private async roots(cwd: string | undefined,realm:PlatformSkillRealm=this.ctx,project?:PlatformProjectContext<FileSystem>): Promise<SkillRoot[]> {
     const roots: SkillRoot[] = []
     if (this.includeDefaultRoots && cwd !== undefined) {
       const projectRoot = project?.checkoutRoot ?? await findProjectRoot(resolve(cwd), optionalFileSystem(realm))
@@ -750,7 +752,7 @@ function hasErrorCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code
 }
 
-async function discoverRoot(root: SkillRoot, ctx: Context, provider: string): Promise<SkillCandidate[]> {
+async function discoverRoot(root: SkillRoot, ctx: PlatformSkillRealm, provider: string): Promise<SkillCandidate[]> {
   const skills: SkillCandidate[] = []
   const entries = await listSkillRootEntries(root, ctx)
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
@@ -780,7 +782,7 @@ async function discoverRoot(root: SkillRoot, ctx: Context, provider: string): Pr
   return skills
 }
 
-async function listSkillRootEntries(root: SkillRoot, ctx: Context): Promise<SkillRootEntry[]> {
+async function listSkillRootEntries(root: SkillRoot, ctx: PlatformSkillRealm): Promise<SkillRootEntry[]> {
   const fs = optionalFileSystem(ctx)
   if (fs !== undefined && root.trustedHost !== true) return await listSkillRootEntriesFromFileSystem(root, fs)
   return await listSkillRootEntriesFromNode(root, ctx)
@@ -804,7 +806,7 @@ function entryFromFs(entry: FsDirEntry): SkillRootEntry {
   return { name: entry.name, type: entry.type, path: entry.target.displayPath }
 }
 
-async function listSkillRootEntriesFromNode(root: SkillRoot, ctx: Context): Promise<SkillRootEntry[]> {
+async function listSkillRootEntriesFromNode(root: SkillRoot, ctx: PlatformSkillRealm): Promise<SkillRootEntry[]> {
   let entries
   try {
     entries = await readdir(root.path, { withFileTypes: true, encoding: 'utf8' })
@@ -824,7 +826,7 @@ async function listSkillRootEntriesFromNode(root: SkillRoot, ctx: Context): Prom
   return result
 }
 
-async function parseSkillFile(path: string, ctx: Context, signal?: AbortSignal, trustedHost = false): Promise<ParsedSkill | undefined> {
+async function parseSkillFile(path: string, ctx: PlatformSkillRealm, signal?: AbortSignal, trustedHost = false): Promise<ParsedSkill | undefined> {
   const raw = await readSkillText(ctx, path, signal, trustedHost)
   signal?.throwIfAborted()
   if (raw === undefined) {
@@ -869,11 +871,11 @@ async function parseSkillFile(path: string, ctx: Context, signal?: AbortSignal, 
   }
 }
 
-function optionalFileSystem(ctx: Context): FileSystem | undefined {
+function optionalFileSystem(ctx: PlatformSkillRealm): FileSystem | undefined {
   return ctx.get('fs')
 }
 
-async function readSkillText(ctx: Context, path: string, signal?: AbortSignal, trustedHost = false): Promise<SkillText | undefined> {
+async function readSkillText(ctx: PlatformSkillRealm, path: string, signal?: AbortSignal, trustedHost = false): Promise<SkillText | undefined> {
   signal?.throwIfAborted()
   const fs = optionalFileSystem(ctx)
   if (fs !== undefined && !trustedHost) {
@@ -890,7 +892,7 @@ async function readSkillText(ctx: Context, path: string, signal?: AbortSignal, t
 }
 
 async function readSkillTextFromFileSystem(
-  ctx: Context, fs: FileSystem, path: string, signal?: AbortSignal,
+  ctx: PlatformSkillRealm, fs: FileSystem, path: string, signal?: AbortSignal,
 ): Promise<SkillText | undefined> {
   // A missing or temporarily inaccessible skill file is not fatal to discovery.
   signal?.throwIfAborted()
@@ -926,7 +928,7 @@ function fsReadErrorMessage(target: FsTarget, error: unknown): string {
   return `failed to read text file at ${target.displayPath}: ${errorMessage(error)}`
 }
 
-async function nodeEntryKind(fullPath: string, entry: { isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean }, ctx: Context): Promise<'directory' | 'file' | undefined> {
+async function nodeEntryKind(fullPath: string, entry: { isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean }, ctx: PlatformSkillRealm): Promise<'directory' | 'file' | undefined> {
   if (entry.isDirectory()) return 'directory'
   if (entry.isFile()) return 'file'
   /* v8 ignore next -- Non-file directory entries such as FIFOs are platform-specific and intentionally skipped. */

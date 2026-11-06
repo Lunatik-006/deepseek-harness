@@ -29,6 +29,7 @@
   ],
   "license": "MIT",
   "peerDependencies": {
+    "@deepseek-ai/dsh-agent": "workspace:*",
     "@deepseek-ai/dsh-fs": "workspace:*",
     "@deepseek-ai/dsh-home-paths": "workspace:*",
     "@deepseek-ai/dsh-skill": "workspace:*",
@@ -40,6 +41,7 @@
     "yaml": "^2.4.2"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-agent": "workspace:*",
     "@deepseek-ai/dsh-fs": "workspace:*",
     "@deepseek-ai/dsh-home-paths": "workspace:*",
     "@deepseek-ai/dsh-skill": "workspace:*",

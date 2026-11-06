@@ -8,7 +8,7 @@ import type {} from '@deepseek-ai/dsh-working-directory'
 import { createHash } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
+import type { Agent, PlatformSkillInvocationResult, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionSeq, type UserMessage } from '@deepseek-ai/dsh-session'
@@ -24,18 +24,16 @@ import {
 } from '@deepseek-ai/dsh-skill'
 
 interface PlatformSkillRequest {agent:Agent|undefined;skill:SkillDefinition;signal:AbortSignal;origin:'model'|'user';input?:string|undefined;messages?:readonly UserMessage[]|undefined}
-interface PlatformSkillInvocationBridge {invoke(request:PlatformSkillRequest):Promise<{handled:boolean;content?:string}>}
-interface PlatformSkillContextBridge {resolve(agent:Agent,signal:AbortSignal,options?:{includeUser?:boolean}):Promise<{cwd:string}>;withExecutionActor<T>(agent:Agent,operation:()=>T,options?:{messages?:readonly UserMessage[]|undefined}):T}
 async function platformSkillCwd(ctx:Context,agent:Agent,signal:AbortSignal):Promise<string> {
-  const project=ctx.get('platformProjectConfig' as string) as unknown as PlatformSkillContextBridge|undefined
+  const project=ctx.get('platformProjectConfig')
   return project?(await project.resolve(agent,signal,{includeUser:false})).cwd:ctx.workingDirectory.ensure(agent,signal)
 }
 function platformSkillRead<T>(ctx:Context,agent:Agent|undefined,operation:()=>T,messages?:readonly UserMessage[]):T {
-  const project=ctx.get('platformProjectConfig' as string) as unknown as PlatformSkillContextBridge|undefined
+  const project=ctx.get('platformProjectConfig')
   return project&&agent?project.withExecutionActor(agent,operation,{messages}):operation()
 }
-async function platformInvokeSkill(ctx:Context,request:PlatformSkillRequest):Promise<{handled:boolean;content?:string}> {
-  const bridge=ctx.get('platformSkillInvocation' as string) as unknown as PlatformSkillInvocationBridge|undefined
+async function platformInvokeSkill(ctx:Context,request:PlatformSkillRequest):Promise<PlatformSkillInvocationResult> {
+  const bridge=ctx.get('platformSkillInvocation')
   if(bridge)return platformSkillRead(ctx,request.agent,()=>bridge.invoke(request),request.messages)
   if(request.skill.metadata?.claude)throw new Error('Claude skill metadata requires the native invocation bridge')
   return{handled:false}
