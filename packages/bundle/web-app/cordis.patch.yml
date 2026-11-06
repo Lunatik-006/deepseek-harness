@@ -591,12 +591,3 @@
       name: '@deepseek-ai/dsh-agent-preset-registry'
       config:
         default: standard
-# Native task worktrees mount from @agent-platform/dsh-worktree inside the agent
-# presets (platform-worktrees). The official experimental worktree service and tool
-# must not mount alongside them: two create_worktree registrations leave the official
-# create tool active with no finish tool, which is the symptom Q observed.
-- id: tool-worktree
-  disabled: true
-
-- id: worktree
-  disabled: true
