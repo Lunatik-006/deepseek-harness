@@ -38,7 +38,7 @@ export function createTransport(config: Config,ctx?:Context): Transport {
       if(project&&ctx) {
         const agent=scopeOf(ctx) as Agent|undefined
         if(!agent?.session||ctx.get('agents')?.get(agent.id)!==agent)throw new Error('Project MCP stdio requires an exact Agent realm')
-        const transport=project.createMcpTransport<Transport>(agent,config)
+        const transport=project.createMcpTransport(agent,config)
         if(transport)return transport
       }
       return new StdioClientTransport({

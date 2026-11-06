@@ -59,6 +59,20 @@ export interface PlatformSkillInvocationResult {
 }
 
 /**
+ * Minimal MCP transport contract the platform bridge returns.
+ *
+ * Mirrors the required members of the MCP SDK `Transport` so the host names the
+ * seam without making `@deepseek-ai/dsh-agent` depend on the SDK. A real SDK
+ * transport is assignable to it, and a new required SDK member makes the
+ * mcp-client return fail to compile instead of hiding behind a cast.
+ */
+export interface PlatformMcpTransport {
+  start(): Promise<void>
+  send(message: unknown, options?: unknown): Promise<void>
+  close(): Promise<void>
+}
+
+/**
  * Platform project bridge. Optional: read it through `ctx.get('platformProjectConfig')`
  * and fall back to the ordinary upstream behavior when it is absent.
  */
@@ -84,9 +98,7 @@ export interface PlatformProjectConfigService {
     options?: { readonly messages?: readonly unknown[] | undefined },
   ): T
   /** Build an MCP transport in the Agent's exact subprocess realm; `undefined` declines. */
-  // The caller chooses the transport type; the MCP SDK must stay out of dsh-agent.
-  // oxlint-disable-next-line typescript/no-unnecessary-type-parameters
-  createMcpTransport<T>(agent: ScopeKey, config: unknown): T | undefined
+  createMcpTransport(agent: ScopeKey, config: unknown): PlatformMcpTransport | undefined
 }
 
 /**
