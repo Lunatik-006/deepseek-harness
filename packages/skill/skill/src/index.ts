@@ -11,6 +11,7 @@
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { NamedEntries, ScopedLayers, scopeChainOf, scopeOf } from '@deepseek-ai/dsh-scope'
@@ -101,6 +102,9 @@ export type SkillRegistration = Omit<SkillDefinition, 'invocation' | 'provider'>
 
 /** Caller context used for cwd-sensitive and abortable provider work. */
 export interface SkillLookupOptions {
+  /** Exact viewing Agent, already passed by the registry; providers use its retained realm. */
+  readonly scope?: ScopeKey | undefined
+
   /** Workspace selector for the current lookup. */
   readonly cwd?: string | undefined
   /** Abort discovery or loading work for the current caller. */
@@ -524,11 +528,21 @@ export class SkillRegistry extends Service {
       // The chain is part of the key rather than assumed stable: a blank-session
       // recompose re-parents an existing scope without touching this registry,
       // and only a chain-bearing key makes the next read see the new preset.
+      const project=this.ctx.get('platformProjectConfig')
+      const scope=options.scope
+      const scoped=scope!==undefined&&'session' in scope&&scope.session!==undefined&&scope.session!==null
+      const discriminator = project === undefined
+        ? undefined
+        : scoped
+          ? await project.skillCacheDiscriminator(scope, options.signal)
+          : 'bundled-only'
       const key = this.collectCacheKey(options.cwd, scopeChainOf(options.scope), revision)
+        + (discriminator === undefined ? '' : `\0${discriminator}`)
       const cached = this.collectCache.get(key)
       if (cached !== undefined) return { entries: cached, cacheable: true }
 
-      const result = await this.collectFresh(options)
+      const fresh = await this.collectFresh(options)
+      const result=project&&!scoped?{ ...fresh,entries:new Map([...fresh.entries].filter(([,entry])=>entry.candidate.source==='bundled')) }:fresh
       throwIfAborted(options.signal)
       if (revision !== this.revision) {
         if (attempt < MAX_COLLECT_ATTEMPTS) {

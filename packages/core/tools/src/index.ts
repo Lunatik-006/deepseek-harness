@@ -6,7 +6,7 @@ import type { ScopeKey, ScopeLayer } from '@deepseek-ai/dsh-scope'
 import { ToolExecutorUnavailableError } from './executor.ts'
 import type { ToolExecutor, ToolBatchInput, ToolBatchResult } from './executor.ts'
 import './events.ts'
-import type { ToolSchema } from '@deepseek-ai/dsh-llm'
+import type { ContextFormed, ToolCallId, ToolSchema } from '@deepseek-ai/dsh-llm'
 import { projectToolSchema } from './schema.ts'
 import { assertSupportedJsonSchema } from './json-schema.ts'
 import { RUN_CODE_NAME, ToolActivationError } from './contracts.ts'
@@ -24,6 +24,8 @@ declare module '@deepseek-ai/dsh-system-prompt' {
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
+    'tool-input-updated': { kind: 'tool-input-updated'; callId: ToolCallId } & ContextFormed
+
     /** Tool availability changes supplied by the tool registry. */
     'tool-registry': { kind: 'tool-registry' }
   }

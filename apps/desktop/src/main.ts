@@ -4,7 +4,8 @@ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
 
 import { access, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   app,
@@ -18,6 +19,7 @@ import {
   nativeTheme,
   net,
   protocol,
+  screen,
   session,
   shell,
   type IpcMainInvokeEvent,
@@ -256,10 +258,102 @@ function platformLoginUrl(authorizeUrl: string): string {
   return url.href
 }
 
+/** Persisted main-window geometry; a convenience record, never startup policy. */
+interface WindowState {
+  x: number
+  y: number
+  width: number
+  height: number
+  maximized: boolean
+}
+
+const WINDOW_STATE_FILE = 'window-state.json'
+let windowStateOwner: BrowserWindow | undefined
+
+function windowStatePath(): string {
+  return join(app.getPath('userData'), WINDOW_STATE_FILE)
+}
+
+function readWindowState(): WindowState | undefined {
+  try {
+    const state = JSON.parse(readFileSync(windowStatePath(), 'utf8')) as Record<string, unknown> | null
+    if (state === null || typeof state !== 'object') return undefined
+    const x = Number(state['x'])
+    const y = Number(state['y'])
+    const width = Number(state['width'])
+    const height = Number(state['height'])
+    if (![x, y, width, height].every(Number.isFinite)) return undefined
+    if (width < 520 || height < 600) return undefined
+    return {
+      x: Math.round(x),
+      y: Math.round(y),
+      width: Math.round(width),
+      height: Math.round(height),
+      maximized: state['maximized'] === true,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function visibleOnDisplay(rect: { x: number; y: number; width: number; height: number }): boolean {
+  return screen.getAllDisplays().some((display) => {
+    const area = display.workArea
+    const width = Math.min(rect.x + rect.width, area.x + area.width) - Math.max(rect.x, area.x)
+    const height = Math.min(rect.y + rect.height, area.y + area.height) - Math.max(rect.y, area.y)
+    return width >= 160 && height >= 120
+  })
+}
+
+function restoredWindowBounds(state: WindowState | undefined): { x: number; y: number; width: number; height: number } | undefined {
+  if (state === undefined) return undefined
+  if (visibleOnDisplay(state)) return { x: state.x, y: state.y, width: state.width, height: state.height }
+  const area = screen.getPrimaryDisplay().workArea
+  const width = Math.min(state.width, area.width)
+  const height = Math.min(state.height, area.height)
+  return {
+    x: area.x + Math.round((area.width - width) / 2),
+    y: area.y + Math.round((area.height - height) / 2),
+    width,
+    height,
+  }
+}
+
+function persistWindowState(): void {
+  const window = windowStateOwner
+  if (window === undefined || window.isDestroyed() || window.isMinimized()) return
+  try {
+    const value = { ...window.getNormalBounds(), maximized: window.isMaximized() || window.isFullScreen() }
+    const file = windowStatePath()
+    const temporary = join(dirname(file), `${WINDOW_STATE_FILE}.tmp`)
+    writeFileSync(temporary, `${JSON.stringify(value)}\n`)
+    renameSync(temporary, file)
+  } catch {
+    // Geometry is a convenience; losing it must never affect startup or shutdown.
+  }
+}
+
+function attachWindowState(window: BrowserWindow, state: WindowState | undefined): void {
+  windowStateOwner = window
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const schedule = (): void => {
+    clearTimeout(timer)
+    timer = setTimeout(persistWindowState, 400)
+    if (typeof timer.unref === 'function') timer.unref()
+  }
+  window.on('resize', schedule)
+  window.on('move', schedule)
+  window.on('maximize', schedule)
+  window.on('unmaximize', schedule)
+  window.on('close', persistWindowState)
+  if (state?.maximized === true) window.maximize()
+  app.on('before-quit', persistWindowState)
+}
+
 function createWindow(preload: string, show = false, primary = false): BrowserWindow {
+  const restoredState = primary ? readWindowState() : undefined
   const window = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    ...(restoredWindowBounds(restoredState) ?? { width: 1280, height: 820 }),
     minWidth: 520,
     minHeight: 600,
     show,
@@ -362,6 +456,7 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
       if (['http:', 'https:'].includes(destination.protocol)) void shell.openExternal(url)
     }
   })
+  if (primary) attachWindowState(window, restoredState)
   return window
 }
 

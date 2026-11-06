@@ -8,7 +8,7 @@ import type {} from '@deepseek-ai/dsh-working-directory'
 import { createHash } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
+import type { Agent, PlatformSkillInvocationResult, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionSeq, type UserMessage } from '@deepseek-ai/dsh-session'
@@ -20,7 +20,24 @@ import {
   renderSkillContent,
   type SkillInvocationSource,
   type SkillSummary,
+  type SkillDefinition,
 } from '@deepseek-ai/dsh-skill'
+
+interface PlatformSkillRequest { agent:Agent|undefined;skill:SkillDefinition;signal:AbortSignal;origin:'model'|'user';input?:string|undefined;messages?:readonly UserMessage[]|undefined }
+async function platformSkillCwd(ctx:Context,agent:Agent,signal:AbortSignal):Promise<string> {
+  const project=ctx.get('platformProjectConfig')
+  return project?(await project.resolve(agent,signal,{ includeUser:false })).cwd:ctx.workingDirectory.ensure(agent,signal)
+}
+function platformSkillRead<T>(ctx:Context,agent:Agent|undefined,operation:()=>T,messages?:readonly UserMessage[]):T {
+  const project=ctx.get('platformProjectConfig')
+  return project&&agent?project.withExecutionActor(agent,operation,{ messages }):operation()
+}
+async function platformInvokeSkill(ctx:Context,request:PlatformSkillRequest):Promise<PlatformSkillInvocationResult> {
+  const bridge=ctx.get('platformSkillInvocation')
+  if(bridge)return platformSkillRead(ctx,request.agent,()=>bridge.invoke(request),request.messages)
+  if(request.skill.metadata?.claude)throw new Error('Claude skill metadata requires the native invocation bridge')
+  return{ handled:false }
+}
 
 export const name = 'tool-skill'
 export const inject = ['agents', 'tools', 'skills', 'workingDirectory']
@@ -85,6 +102,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     name: 'skill',
     description: 'Load the full instructions for a skill. Call it before acting on a task that names or clearly matches a skill in the session skill catalog.',
     parameters: {
+      arguments:{ type:'string',description:'Task or arguments for a delegated Claude skill. Omit to use the current user request.' },
       name: { type: 'string', required: true, description: 'The exact skill name from the available skills list.' },
     },
     output: {
@@ -133,29 +151,30 @@ export function apply(ctx: Context, config: Config = {}): void {
       }
       // The agent is its own scope key, so the lookup resolves the layered
       // registry exactly as this agent's composition sees it.
-      const cwd = exec.agent === undefined ? undefined : await ctx.workingDirectory.ensure(exec.agent, exec.signal)
+      const cwd = exec.agent === undefined ? undefined : await platformSkillCwd(ctx,exec.agent,exec.signal)
       const lookup = { cwd, signal: exec.signal, scope: exec.agent }
-      const summary = (await ctx.skills.list(lookup)).find(skill => skill.name === args.name)
+      const summary = (await platformSkillRead(ctx,exec.agent,()=>ctx.skills.list(lookup))).find(skill => skill.name === args.name)
       if (!summary) {
         throw new Error(`skill "${args.name}" is unknown or no longer available`)
       }
       if (!isModelInvocable(summary)) {
         throw new Error(`skill "${args.name}" is not available for model invocation`)
       }
-      const skill = await ctx.skills.get(args.name, lookup)
+      const skill = await platformSkillRead(ctx,exec.agent,()=>ctx.skills.get(args.name,lookup))
       if (!skill) {
         throw new Error(`skill "${args.name}" is unknown or no longer available`)
       }
       if (!isModelInvocable(skill)) {
         throw new Error(`skill "${args.name}" is not available for model invocation`)
       }
+      const dispatched=await platformInvokeSkill(ctx,{ agent:exec.agent,skill,signal:exec.signal,origin:'model',input:args.arguments??'' })
       return {
         name: skill.name,
         provider: skill.provider,
         ...skill.resourceBase !== undefined ? {
           resourceBase: { ...skill.resourceBase },
         } : {},
-        content: skill.content,
+        content: dispatched.handled?dispatched.content??'':skill.content,
       }
     },
     presentCall(args) {
@@ -187,19 +206,21 @@ export function apply(ctx: Context, config: Config = {}): void {
     const names = invokedSkillNames(messages)
     if (names.length === 0) return decision
     signal.throwIfAborted()
-    const lookup = { cwd: await ctx.workingDirectory.ensure(agent, signal), signal, scope: agent }
+    const lookup = { cwd: await platformSkillCwd(ctx,agent,signal), signal, scope: agent }
     const injections: UserMessage[] = []
     for (const name of names) {
-      const skill = await ctx.skills.get(name, lookup)
+      const skill = await platformSkillRead(ctx,agent,()=>ctx.skills.get(name,lookup),messages)
       signal.throwIfAborted()
       // Unknown names and user-disabled skills stay plain prose: the
       // gesture was never a claim this boundary recognizes. The check sits
       // on the loaded definition — the single lookup that produces what is
       // actually injected.
       if (skill === undefined || !isUserInvocable(skill)) continue
+      const dispatched=await platformInvokeSkill(ctx,{ agent,skill,signal,messages,origin:'user',input:messages.flatMap(message=>message.content.filter(block=>block.type==='text').map(block=>block.text)).join('\n') })
+      const invocationSkill=dispatched.handled?{ ...skill,content:dispatched.content??'' }:skill
       const source: SkillInvocationSource = { kind: 'skill-invocation', name, form: 'instructions' }
       injections.push(createUserMessage({
-        content: [{ type: 'text', text: renderSkillContent(skill) }],
+        content: [{ type: 'text', text: renderSkillContent(invocationSkill) }],
         source,
       }))
     }
@@ -215,7 +236,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   // scope, so a plugin mounted inside an agent preset registers for that agent
   // alone and an unscoped lookup correctly finds nothing.
   ctx.on('agent/pre-step', async (
-    { agent, signal },
+    { agent, signal, messages },
     next,
   ): Promise<PreStepDecision> => {
     const decision = await next()
@@ -223,7 +244,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     signal.throwIfAborted()
     const toolVisible = ctx.tools.get(skillTool.name, agent) === skillTool
     const snapshot = toolVisible
-      ? await ctx.skills.snapshot({ cwd: await ctx.workingDirectory.ensure(agent, signal), signal, scope: agent })
+      ? await platformSkillRead(ctx,agent,async()=>ctx.skills.snapshot({
+        cwd: await platformSkillCwd(ctx,agent,signal), signal, scope: agent,
+      }),messages)
       : { skills: [], complete: true }
     signal.throwIfAborted()
     const skills = snapshot.skills.filter(isModelInvocable)

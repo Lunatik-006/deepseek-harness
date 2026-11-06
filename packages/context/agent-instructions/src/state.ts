@@ -372,6 +372,7 @@ export async function reconcileInstructionContext(
       const previous = effective.get(scope)
       const probe = await probeScopeInstruction(scope, projectRoot, resolved, fileSystem, options.signal)
       if (probe.kind === 'unavailable') {
+        if(resolved.candidateSelection==='first-present')throw new Error('Selected instruction source is unavailable')
         rollbackGroup()
         break
       }
@@ -384,7 +385,7 @@ export async function reconcileInstructionContext(
       if (seenAbsolutePaths.has(probedFile.absolutePath)) continue
       seenAbsolutePaths.add(probedFile.absolutePath)
       const cached = versions.get(scope)
-      const metadataUnchanged = cached !== undefined
+      const metadataUnchanged = resolved.candidateSelection !== 'first-present' && cached !== undefined
         && cached.path === probedFile.displayPath
         && cached.version === probedFile.version
       if (metadataUnchanged) {
@@ -404,7 +405,7 @@ export async function reconcileInstructionContext(
           && hasKeptTrimmed(group, cached.trimmedDigest)) continue
       }
 
-      const file = await readScopeInstruction(probedFile, resolved.maxSourceBytes, fileSystem, options.signal)
+      const file = await readScopeInstruction(probedFile, resolved.maxSourceBytes, fileSystem, options.signal,{ enabled:resolved.candidateSelection==='first-present',userRoot:resolved.platformUserRoot })
       if (file === undefined) {
         rollbackGroup()
         break

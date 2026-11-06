@@ -24,6 +24,7 @@ export { AgentModel, modelSelectionProjectionDefinition, installModelSelection }
 export type { ModelSelectionProjectionState } from './model-selection.ts'
 export type * from './projection.ts'
 export * from './consumed-work.ts'
+export type * from './platform-services.ts'
 export { agentCarrier, agentEvents, assembleContextFor, emitAgentEvent } from './dispatch.ts'
 export type { AgentEventDispatch, AgentSubjectEvent } from './dispatch.ts'
 
