@@ -485,9 +485,14 @@ function commitCompactionBody(
     usage,
     checkpointMessage,
   } = summarized
-  const callRecord = summarized.llmStreamCall === true
+  // `rawOutput` is log-only and most streamed summaries are byte-identical to
+  // the summary the model receives; storing that duplicate doubles the durable
+  // summary record for no consumer.
+  const rawDuplicatesSummary = summarized.rawOutput !== undefined
+    && JSON.stringify(summarized.rawOutput) === JSON.stringify(summarized.summary)
+  const callRecord = summarized.llmStreamCall === true && !rawDuplicatesSummary
     ? { rawOutput: summarized.rawOutput, llmStreamCall: true as const }
-    : summarized.rawOutput === undefined ? {} : { rawOutput: summarized.rawOutput }
+    : summarized.rawOutput === undefined || rawDuplicatesSummary ? {} : { rawOutput: summarized.rawOutput }
   const summaryEvent = session.append('compaction/summary', {
     compactionId: startEvent.data.compactionId,
     ...startEvent.data.sourceCommandId === undefined
