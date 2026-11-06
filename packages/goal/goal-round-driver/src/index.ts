@@ -196,7 +196,7 @@ export function apply(ctx: Context): void {
     const jobs = ctx.get('jobs') as RunningJobRegistry | undefined
     if (jobs !== undefined) {
       for (;;) {
-        const running = (jobs.list(agent.id) ?? [])
+        const running = jobs.list(agent.id)
           .filter(job => job.status === 'running' || job.status === 'stopping')
         if (running.length === 0) break
         await Promise.race([new Promise<void>((resolve) => {

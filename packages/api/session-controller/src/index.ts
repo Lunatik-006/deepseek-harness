@@ -313,7 +313,7 @@ export class SessionController extends TypertRemoteService {
   @Remote('selectModel')
   selectModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue> {
     // Capture the verified caller before entering the Host-owned commands object.
-    const principal = this.ctx.invocation?.peer?.principal
+    const principal = this.ctx.invocation?.peer.principal
     // `platform-human` is a merge-extended principal kind owned by the platform
     // access plugin, so the Host compares it as a string rather than a literal.
     const kind: string | undefined = principal?.kind
