@@ -279,7 +279,7 @@ export class WorkspaceRegistry extends Service {
    * @returns after the queued re-index finished.
    */
   async refreshExecutionDirectories(): Promise<void> {
-    return await this.enqueueOperation(async () => {
+    await this.enqueueOperation(async () => {
       await this.replaceHeaderIndex(await this.listStoredHeaders())
       await this.indexLiveSessions()
       this.reportFilteredCandidates()

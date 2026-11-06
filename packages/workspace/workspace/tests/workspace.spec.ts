@@ -1592,7 +1592,7 @@ describe('configured execution directories', () => {
 
   it('rejects a malformed managed answer', async () => {
     const result = await harness({
-      execution: () => ({ path: 'relative/path', status: 'ok' }) as ExecutionWorkspaceDirectory,
+      execution: () => ({ path: 'relative/path', status: 'ok' }),
     })
     onTestFinished(() => result.ctx.fiber.dispose())
     await expect(result.registry.create('/executor/alias')).rejects.toThrow(/Invalid configured execution workspace resolution/)
