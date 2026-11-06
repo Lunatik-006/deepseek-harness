@@ -86,8 +86,10 @@ export function apply(ctx: Context, config: Config): void {
   // read_image is composition-conditional: without a mounted attachment store
   // the deployment cannot durably commit image bytes, so the tool never
   // registers; the execute body keeps a defensive re-check for direct callers.
+  // The registration scope declares both services the executor resolves inside
+  // it: `attachments` persists the image and `fs` reads its bytes.
   if (resolved.readImage) {
-    ctx.inject(['attachments'], (imageCtx) => {
+    ctx.inject(['attachments', 'fs'], (imageCtx) => {
       applyReadImageTool(imageCtx)
     })
   }
