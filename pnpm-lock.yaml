@@ -13587,6 +13587,9 @@ importers:
 
   packages/mcp/mcp-client:
     dependencies:
+      '@deepseek-ai/dsh-agent':
+        specifier: workspace:*
+        version: link:../../core/agent
       '@deepseek-ai/dsh-util-values':
         specifier: workspace:*
         version: link:../../util/values

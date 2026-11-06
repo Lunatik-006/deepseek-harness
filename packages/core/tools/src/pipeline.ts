@@ -3,12 +3,13 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { ScopeKey } from '@deepseek-ai/dsh-scope'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { HarnessError } from '@deepseek-ai/dsh-llm'
+import { HarnessError, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import { assertNever, deepFreeze, snapshotJsonValue, type JsonValue } from '@deepseek-ai/dsh-util-values'
 import { TOOL_ABORTED, TOOL_ABORTED_BEFORE_DISPATCH, ToolNotFoundError, ToolOutputError } from './contracts.ts'
 import { validateJsonSchemaValue } from './json-schema.ts'
+import { ToolArgsError } from './schema.ts'
 import type { ToolsService } from './index.ts'
 import type { ResolvedToolSet, ToolDefinition, ToolExecutionInput, ToolExecutionMode, ToolExecution, ToolRunContext, ToolExecutionResult, ToolExecutionSuccess, ToolErrorInfo, ToolExecutionToken, PreToolDecision, PostToolDecision } from './contracts.ts'
 
@@ -200,6 +201,29 @@ export class ToolExecutionPipeline {
         carrier, 'tools/pre-execute', exec,
         () => Promise.resolve<PreToolDecision>({ kind: 'allow' }),
       )
+      if (this.callerCancelled(exec)) {
+        return { kind: 'post-result', exec, result: toolAbortedBeforeDispatchResult() }
+      }
+      if ((gate.kind === 'allow' || gate.kind === 'ask') && Object.hasOwn(gate, 'updatedInput')) {
+        const detached = snapshotJsonValue(gate.updatedInput)
+        if (this.callerCancelled(exec)) {
+          return { kind: 'post-result', exec, result: toolAbortedBeforeDispatchResult() }
+        }
+        if (detached === undefined) throw new TypeError('updatedInput must be losslessly JSON-serializable')
+        const definition = this.resolveExecution(exec.name, exec.agent, exec.parent !== undefined, exec.toolSet)
+        if (!definition) throw new ToolNotFoundError(exec.name)
+        const violations = validateJsonSchemaValue(definition.parameters, detached, '')
+        if (violations.length) throw new ToolArgsError(violations)
+        if (!exec.agent) throw new Error('Updated tool input requires a native Session audit')
+        // The registry owns this execution; callers retain the readonly view and original call.
+        Object.defineProperty(exec, 'arguments', { value: deepFreeze(detached), enumerable: true, writable: true, configurable: true })
+        exec.agent.session.append('tool/input-updated', { callId: exec.callId, arguments: detached })
+        exec.deferContext(createUserMessage({
+          content: [{ type: 'text', text: 'A Host hook prepared updated input for tool call ' + String(exec.callId)
+            + '. Original model arguments remain unchanged in history. Effective input: ' + JSON.stringify(detached) }],
+          source: { kind: 'tool-input-updated', form: 'instructions', callId: exec.callId },
+        }))
+      }
       const askResolution = gate.kind === 'ask'
         ? await this.serviceAsk(exec, gate)
         : { decision: gate, approvalCancelled: false }
