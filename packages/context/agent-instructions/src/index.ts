@@ -11,6 +11,8 @@
 
 import type {} from '@deepseek-ai/dsh-working-directory'
 import type { Context } from '@deepseek-ai/cordis'
+import type {FileSystem} from '@deepseek-ai/dsh-fs'
+import type {PlatformInstructionPolicy} from './config.ts'
 import { isDeepStrictEqual } from 'node:util'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -30,6 +32,8 @@ import {
 } from './state.ts'
 import { instructionCandidateGroup, instructionScopeKey, scopeForDisplayPath, type AgentInstructionChange } from './render.ts'
 
+interface PlatformInstructionContext {fs:FileSystem;cwd:string}
+interface PlatformInstructionBridge {resolve(agent:Agent,signal:AbortSignal,options?:{actorMode:'execution'}):Promise<PlatformInstructionContext>;instructionPolicy(agent:Agent,signal:AbortSignal,context:PlatformInstructionContext):Promise<PlatformInstructionPolicy>}
 export { Config, name }
 /** Services required by workspace instruction projection. */
 export const inject = ['agents', 'workingDirectory']
@@ -106,24 +110,30 @@ export function apply(ctx: Context, config: Config): void {
   // boundaries before an asynchronous projection may mutate the agent inbox.
   const stepTouches = new WeakMap<Session, ProjectionTouch[]>()
 
+  const platformResolvedConfig=resolved
+  const platformBridge=ctx.get('platformProjectConfig' as string) as unknown as PlatformInstructionBridge|undefined
   const compose = async (
     agent: Agent,
     signal: AbortSignal,
     claimed: readonly UserMessage[],
     pending: readonly UserMessage[],
     touchedPaths: readonly string[] = [],
-  ): Promise<UserMessage | undefined> => {
+   ): Promise<UserMessage | undefined> => {
+    if(platformResolvedConfig.candidateSelection==='first-present'&&!platformBridge)throw new Error('First-present instructions require the exact Agent project context')
+    const platformProject=platformResolvedConfig.candidateSelection==='first-present'?await platformBridge!.resolve(agent,signal,{actorMode:'execution'}):undefined
+    const resolved=platformProject?{...platformResolvedConfig,...await platformBridge!.instructionPolicy(agent,signal,platformProject)}:platformResolvedConfig
+    if(platformProject)touchedPaths=await Promise.all(touchedPaths.map(async path=>platformProject.fs.processPath(await platformProject.fs.resolve(path,{cwd:platformProject.cwd,signal}))))
     signal.throwIfAborted()
     if (resolved.maxBytes <= 0 || !Number.isFinite(resolved.maxBytes)) {
       return undefined
     }
-    const fileSystem = ctx.get('fs')
+    const fileSystem = platformProject?.fs ?? ctx.get('fs')
     if (fileSystem === undefined) return undefined
     const content: UserMessage['content'][number][] = []
     const changes: AgentInstructionChange[] = []
     let desiredBaseline = false
     const authorityMessages = [...claimed]
-    const cwd = await ctx.workingDirectory.ensure(agent, signal)
+    const cwd = platformProject?.cwd ?? await ctx.workingDirectory.ensure(agent, signal)
     const projectRoot = await findProjectRoot(cwd, resolved.projectRootMarkers, fileSystem, signal)
     const identity = workspaceBaselineIdentity(resolved, cwd, projectRoot)
     if (touchedPaths.length === 0 && pending.length > 0
@@ -145,6 +155,7 @@ export function apply(ctx: Context, config: Config): void {
         projectRootMarkers: resolved.projectRootMarkers,
         maxBytes: resolved.maxBytes,
         maxSourceBytes: resolved.maxSourceBytes,
+        candidateSelection:resolved.candidateSelection,platformUserRoot:resolved.platformUserRoot,platformUserInstruction:resolved.platformUserInstruction,
         instructionFileCandidates: resolved.instructionFileCandidates,
         localInstructionFileCandidates: resolved.localInstructionFileCandidates,
         projectRoot,

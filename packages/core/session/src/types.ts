@@ -285,6 +285,9 @@ export type RequestHeaderReason = 'initial' | 'resume' | 'change' | 'series'
  * compact raw streams so persistence stores one durable settlement per attempt.
  */
 export interface SessionEventMap {
+  /** Final validated input before native approval/body; the original tool/call remains immutable. */
+  'tool/input-updated': {callId: ToolCallId; arguments: JsonValue}
+
   /**
    * Opens turn `turn` before the loop claims queued input or runs pre-step.
    * Rejection, empty input, cancellation, or failure may close it with no

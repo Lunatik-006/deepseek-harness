@@ -11,7 +11,7 @@
 
 import { access, lstat, readdir, readFile, realpath, stat } from 'node:fs/promises'
 import { unwatchFile, watchFile, type Stats } from 'node:fs'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from './paths.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import chokidar from 'chokidar'
 import z from '@deepseek-ai/schemastery'
@@ -40,6 +40,17 @@ const USER_AGENTS_RANK = 500
 const DEFAULT_WATCH_STABILITY_THRESHOLD_MS = 200
 const DEFAULT_WATCH_POLL_INTERVAL_MS = 100
 const DEFAULT_WATCH_MAX_PROJECTS = 128
+
+interface PlatformSkillProject {fs:FileSystem;cwd:string;checkoutRoot:string;userConfigRoot?:string;executorId?:string}
+interface PlatformSkillProjectBridge {resolve(scope:NonNullable<SkillLookupOptions['scope']>,signal?:AbortSignal):Promise<PlatformSkillProject>}
+async function platformSkillProject(ctx:Context,options:SkillLookupOptions):Promise<PlatformSkillProject|undefined> {
+  const scope=options.scope
+  const bridge=ctx.get('platformProjectConfig' as string) as unknown as PlatformSkillProjectBridge|undefined
+  return scope&&'session' in scope&&bridge?bridge.resolve(scope,options.signal):undefined
+}
+function platformSkillReadContext(ctx:Context,project:PlatformSkillProject|undefined):Context {
+  return project?{get:(name:string)=>name==='fs'?project.fs:ctx.get(name),logger:ctx.logger} as unknown as Context:ctx
+}
 
 export const name = 'skill-filesystem'
 export const inject = ['skills']
@@ -183,10 +194,13 @@ export class FileSystemSkillProvider implements SkillProvider {
    *   logged and omitted; root or watcher failures make the observation incomplete.
    */
   async list(options: SkillLookupOptions): Promise<SkillCandidate[] | SkillProviderObservation> {
-    const roots = await this.roots(options.cwd)
+    const project=await platformSkillProject(this.ctx,options)
+    const realm=platformSkillReadContext(this.ctx,project)
+    const discoveredRoots = await this.roots(project?.cwd??options.cwd,realm,project)
+    const roots=this.ctx.get('platformProjectConfig' as string)&&!(options.scope as {session?:unknown}|undefined)?.session?discoveredRoots.filter(root=>root.source==='bundled'):discoveredRoots
     let complete = true
     try {
-      await this.watchManager.observeRoots(roots)
+      if(!project?.executorId)await this.watchManager.observeRoots(roots)
     } catch (error) {
       if (this.disposal !== undefined) throw error
       complete = false
@@ -195,7 +209,7 @@ export class FileSystemSkillProvider implements SkillProvider {
     for (const root of roots) {
       options.signal?.throwIfAborted()
       try {
-        const discovered = await discoverRoot(root, this.ctx, this.name)
+        const discovered = await discoverRoot(root, realm, this.name)
         options.signal?.throwIfAborted()
         candidates.push(...discovered)
       } catch (error) {
@@ -215,7 +229,9 @@ export class FileSystemSkillProvider implements SkillProvider {
    */
   async get(candidate: SkillCandidate, options: SkillLookupOptions): Promise<SkillDefinition | undefined> {
     const locator = candidate.locator as LocalLocator
-    const parsed = await parseSkillFile(locator.path, this.ctx, options.signal, candidate.source === 'bundled')
+    const project=await platformSkillProject(this.ctx,options)
+    const realm=platformSkillReadContext(this.ctx,project)
+    const parsed = await parseSkillFile(locator.path, realm, options.signal, candidate.source === 'bundled')
     if (parsed === undefined) return undefined
     return {
       name: parsed.name,
@@ -248,20 +264,20 @@ export class FileSystemSkillProvider implements SkillProvider {
     return this.disposal
   }
 
-  private async roots(cwd: string | undefined): Promise<SkillRoot[]> {
+  private async roots(cwd: string | undefined,realm:Context=this.ctx,project?:PlatformSkillProject): Promise<SkillRoot[]> {
     const roots: SkillRoot[] = []
     if (this.includeDefaultRoots && cwd !== undefined) {
-      const projectRoot = await findProjectRoot(resolve(cwd), optionalFileSystem(this.ctx))
+      const projectRoot = project?.checkoutRoot ?? await findProjectRoot(resolve(cwd), optionalFileSystem(realm))
       roots.push(
         { path: join(projectRoot, '.dsh/skills'), source: 'project-dsh', rank: PROJECT_DSH_RANK, projectRoot },
         { path: join(projectRoot, '.agents/skills'), source: 'project-agents', rank: PROJECT_AGENTS_RANK, projectRoot },
       )
     }
     roots.push(...this.customSkillDirs.map(path => ({ path, source: 'custom' as const, rank: CUSTOM_RANK })))
-    if (this.includeDefaultRoots) {
+    if (this.includeDefaultRoots&&(!project||project.userConfigRoot)) {
       roots.push(
-        { path: join(this.dshHome, 'skills'), source: 'user-dsh', rank: USER_DSH_RANK, skipSystem: true },
-        { path: join(this.agentsHome, 'skills'), source: 'user-agents', rank: USER_AGENTS_RANK },
+        { path: project?join(project.userConfigRoot!,'.dsh/skills'):join(this.dshHome, 'skills'), source: 'user-dsh', rank: USER_DSH_RANK, skipSystem: true },
+        { path: project?join(project.userConfigRoot!,'.agents/skills'):join(this.agentsHome, 'skills'), source: 'user-agents', rank: USER_AGENTS_RANK },
       )
     }
     if (this.bundledSkillDir !== undefined) {

@@ -4,7 +4,7 @@
  * @module @deepseek-ai/dsh-agent-instructions/config
  */
 
-import { relative } from 'node:path'
+import { relative } from './paths.ts'
 import z from '@deepseek-ai/schemastery'
 import { resolveAgentsHome, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 
@@ -16,6 +16,8 @@ const RESERVED_PATH_SEGMENTS = new Set(['', '.', '..'])
 
 /** User-facing workspace instruction loader configuration. */
 export interface Config {
+  candidateSelection?: 'all' | 'first-present'
+
   /** Directory entries that identify the project root while walking upward from the current working directory. */
   projectRootMarkers?: string[]
   /**
@@ -39,6 +41,7 @@ export interface Config {
 }
 
 export const Config: z<Config> = z.object({
+  candidateSelection:z.union(['all','first-present'] as const).default('all'),
   projectRootMarkers: z.array(z.string()).default([...DEFAULT_PROJECT_ROOT_MARKERS]),
   maxBytes: z.number().required(),
   maxSourceBytes: z.number().step(1).min(1).default(DEFAULT_MAX_SOURCE_BYTES),
@@ -47,7 +50,13 @@ export const Config: z<Config> = z.object({
 })
 
 /** Normalized instruction discovery configuration. */
-export interface ResolvedDiscoveryConfig {
+export interface PlatformInstructionPolicy {
+  platformUserRoot?: string | null | undefined
+  platformUserInstruction?: { absolutePath: string; displayPath: string } | null | undefined
+}
+export interface ResolvedDiscoveryConfig extends PlatformInstructionPolicy {
+  candidateSelection: 'all' | 'first-present'
+
   dshHome: string
   agentsHome: string
   projectRootMarkers: string[]
@@ -73,14 +82,17 @@ export function workspaceBaselineIdentity(
   cwd: string,
   projectRoot: string,
 ): string {
-  return JSON.stringify({
-    projectRoot: relative(cwd, projectRoot),
-    projectRootMarkers: config.projectRootMarkers,
-    maxBytes: config.maxBytes,
-    maxSourceBytes: config.maxSourceBytes,
-    instructionFileCandidates: config.instructionFileCandidates,
-    localInstructionFileCandidates: config.localInstructionFileCandidates,
-  })
+	return JSON.stringify({
+		projectRoot: relative(cwd, projectRoot),
+		projectRootMarkers: config.projectRootMarkers,
+		maxBytes: config.maxBytes,
+        candidateSelection:config.candidateSelection,
+        platformUserRoot:config.platformUserRoot,
+        platformUserInstruction:config.platformUserInstruction?.absolutePath??null,
+        maxSourceBytes: config.maxSourceBytes,
+		instructionFileCandidates: config.instructionFileCandidates,
+		localInstructionFileCandidates: config.localInstructionFileCandidates
+	});
 }
 
 /**
@@ -92,11 +104,10 @@ export function workspaceBaselineIdentity(
 export function resolveConfig(config: Config): ResolvedConfig {
   return {
     ...resolveDiscoveryConfig({
+      ...config.candidateSelection === undefined ? {} : { candidateSelection: config.candidateSelection },
       ...config.projectRootMarkers === undefined ? {} : { projectRootMarkers: config.projectRootMarkers },
       ...config.instructionFileCandidates === undefined ? {} : { instructionFileCandidates: config.instructionFileCandidates },
-      ...config.localInstructionFileCandidates === undefined
-        ? {}
-        : { localInstructionFileCandidates: config.localInstructionFileCandidates },
+      ...config.localInstructionFileCandidates === undefined ? {} : { localInstructionFileCandidates: config.localInstructionFileCandidates },
     }),
     maxBytes: config.maxBytes,
     maxSourceBytes: config.maxSourceBytes ?? DEFAULT_MAX_SOURCE_BYTES,
@@ -116,21 +127,15 @@ export function resolveConfig(config: Config): ResolvedConfig {
  */
 export function resolveDiscoveryConfig(
   config: Pick<Config, 'projectRootMarkers' | 'instructionFileCandidates' | 'localInstructionFileCandidates'>
-    & { dshHome?: string; agentsHome?: string },
+    & { dshHome?: string; agentsHome?: string; candidateSelection?: 'all' | 'first-present' | undefined } & PlatformInstructionPolicy,
 ): ResolvedDiscoveryConfig {
-  return {
-    dshHome: resolveDshHome(config.dshHome),
-    agentsHome: resolveAgentsHome(config.agentsHome),
-    projectRootMarkers: config.projectRootMarkers ?? [...DEFAULT_PROJECT_ROOT_MARKERS],
-    instructionFileCandidates: resolveInstructionFileCandidates(
-      config.instructionFileCandidates,
-      DEFAULT_INSTRUCTION_FILE_CANDIDATES,
-    ),
-    localInstructionFileCandidates: resolveInstructionFileCandidates(
-      config.localInstructionFileCandidates,
-      DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES,
-    ),
-  }
+    return {candidateSelection:config.candidateSelection??'all',platformUserRoot:config.platformUserRoot,platformUserInstruction:config.platformUserInstruction,
+		dshHome: resolveDshHome(config.dshHome),
+		agentsHome: resolveAgentsHome(config.agentsHome),
+		projectRootMarkers: config.projectRootMarkers ?? [...DEFAULT_PROJECT_ROOT_MARKERS],
+		instructionFileCandidates: resolveInstructionFileCandidates(config.instructionFileCandidates, DEFAULT_INSTRUCTION_FILE_CANDIDATES),
+		localInstructionFileCandidates: resolveInstructionFileCandidates(config.localInstructionFileCandidates, DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES)
+	};
 }
 
 function resolveInstructionFileCandidates(candidates: string[] | undefined, fallback: readonly string[]): string[] {

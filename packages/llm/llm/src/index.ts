@@ -359,6 +359,8 @@ export class LlmRuntime extends TypertRemoteService {
     (request: LlmModelDiscoveryRequest, signal?: AbortSignal) => Promise<readonly LlmDiscoveredModel[]>
   >()
 
+  private fileReadPathResolvers = new Map<string,(ref:FileAttachmentRef)=>string|null|undefined>()
+
   constructor(ctx: Context) {
     super(ctx, 'llm')
   }
@@ -1044,7 +1046,27 @@ export class LlmRuntime extends TypertRemoteService {
    * Resolve the current execution-world read path of one durable file
    * reference through the mounted attachment and filesystem providers.
    */
+  /** Register a scoped execution-path resolver without importing an Agent into LLM core.
+   * undefined declines, null handles an unavailable environment, a string names its process path.
+   */
+  registerFileReadPathResolver(id:string,resolver:(ref:FileAttachmentRef)=>string|null|undefined):()=>void {
+    const dispose=this.ctx.effect(function* (this:LlmRuntime) {
+      if(typeof id!=='string'||!id||typeof resolver!=='function')throw new LlmError('File-read-path resolver needs an id and callback','INVALID_FILE_READ_PATH_RESOLVER')
+      if(this.fileReadPathResolvers.has(id))throw new LlmError('File-read-path resolver is already registered','DUPLICATE_FILE_READ_PATH_RESOLVER')
+      this.fileReadPathResolvers.set(id,resolver)
+      yield()=>{if(this.fileReadPathResolvers.get(id)===resolver)this.fileReadPathResolvers.delete(id)}
+    }.bind(this),'llm.registerFileReadPathResolver()')
+    return()=>void dispose()
+  }
   private fileReadPath(ref: FileAttachmentRef): string | undefined {
+    for(const resolver of this.fileReadPathResolvers.values()) {
+      const path=resolver(ref)
+      if(path===null)return undefined
+      if(path!==undefined) {
+        if(typeof path!=='string'||!path)throw new LlmError('File-read-path resolver returned an invalid result','INVALID_FILE_READ_PATH_RESOLVER')
+        return path
+      }
+    }
     let hostPath: string | undefined
     try {
       hostPath = this.ctx.get('attachments')?.fileHostPath(ref)
