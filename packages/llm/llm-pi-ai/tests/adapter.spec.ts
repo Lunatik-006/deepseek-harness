@@ -174,6 +174,35 @@ describe('PiAiAdapter provider routing', () => {
     expect(server.headers[1]).not.toHaveProperty('x-opencode-session')
   })
 
+  it('keeps the OpenCode session header when the route names its protocol explicitly', async () => {
+    // Naming the protocol bypasses catalog reuse and rebuilds the provider. The
+    // rebuilt route must keep the catalog's session-header rule, or an OpenCode
+    // deployment configured with an explicit api fails every turn with 400
+    // MissingSessionID even though the request carries a Session id.
+    const server = await mockServer([{ events: textEvents }, { events: textEvents }])
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    ctx.llm.registerAdapter(['opencode-go'], adapterOf({
+      'opencode-go': {
+        apiKeyEnv: 'PI_TEST_KEY',
+        baseURL: `${server.url}/v1`,
+        api: 'openai-completions',
+      },
+    }))
+
+    await assemble(ctx, {
+      provider: 'opencode-go',
+      model: 'deepseek-v4.1-flash',
+      messages: [],
+      sessionId: 'explicit-protocol-session' as never,
+    })
+    await assemble(ctx, { provider: 'opencode-go', model: 'deepseek-v4.1-flash', messages: [] })
+
+    expect(server.paths).toEqual(['/v1/chat/completions', '/v1/chat/completions'])
+    expect(server.headers[0]?.['x-opencode-session']).toBe('explicit-protocol-session')
+    expect(server.headers[1]).not.toHaveProperty('x-opencode-session')
+  })
+
   it('uses a dynamic request effort and reports unsupported efforts before network I/O', async () => {
     const server = await mockServer([{ events: textEvents }, { events: textEvents }])
     const ctx = await harness(server.url, { reasoning: 'max' })
