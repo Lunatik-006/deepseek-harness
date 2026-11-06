@@ -128,3 +128,25 @@
           - id: tool-plugin-market
             name: '@deepseek-ai/dsh-plugin-market/tools'
             disabled: true
+          # Native task worktrees: the service and its tools mount together in one isolated scope.
+          # The ownership service is the profile-root row from @agent-platform/dsh-worktree's bundle
+          # patch; these two rows are agent-preset composition and cannot be appended by that patch.
+          - id: platform-worktrees
+            name: cordis:group
+            group: true
+            isolate:
+              worktrees: true
+            config:
+              - id: worktrees
+                name: '@agent-platform/dsh-worktree/service'
+                config:
+                  newSession: true
+                  presetScoped: true
+                  detached: true
+                  directory: .claude/worktrees
+                  freshBase:
+                    remote: origin
+                    branch: main
+                  bootstrapSandbox: host
+              - id: tool-worktree
+                name: '@agent-platform/dsh-worktree/tools'
