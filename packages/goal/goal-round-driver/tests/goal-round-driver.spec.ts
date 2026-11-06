@@ -1014,6 +1014,38 @@ describe('same-session goal driving', () => {
     expect(test.adapter.requests).toHaveLength(0)
   })
 
+  /** Provide a background-job registry whose caller-owned job this test settles. */
+  function provideRunningJobs(ctx: Context): { list: ReturnType<typeof vi.fn>; finish(): void } {
+    let status: 'running' | 'completed' = 'running'
+    const list = vi.fn((caller?: SessionId) => [{ id: 'job-1', owner: caller, status }])
+    ctx.provide('jobs', { list } as never)
+    return { list, finish: () => { status = 'completed' } }
+  }
+
+  it("waits for the caller's running background job before reserving the next round", async () => {
+    const test = await harness([textResponse('round one')])
+    const jobs = provideRunningJobs(test.ctx)
+    test.ctx.goals.create(test.agent, { objective: 'wait for the ship gate', maxGoalRounds: 1 })
+
+    await vi.waitFor(() => { expect(jobs.list).toHaveBeenCalledWith(test.agent.id) })
+    expect(test.adapter.requests).toHaveLength(0)
+
+    jobs.finish()
+    await vi.waitFor(() => { expect(test.adapter.requests).toHaveLength(1) }, { timeout: 5_000 })
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({ roundsStarted: 1 })
+  })
+
+  it('reserves the next round without waiting when no caller-owned job runs', async () => {
+    const test = await harness([textResponse('round one')])
+    const jobs = provideRunningJobs(test.ctx)
+    jobs.finish()
+    test.ctx.goals.create(test.agent, { objective: 'ignore settled jobs', maxGoalRounds: 1 })
+
+    await waitForRequests(test.adapter, 1)
+    expect(jobs.list).toHaveBeenCalledWith(test.agent.id)
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({ roundsStarted: 1 })
+  })
+
   it('disarms and cancels an admitted round before driver teardown completes', async () => {
     const test = await harness(['hang'])
     test.ctx.goals.create(test.agent, { objective: 'survive plugin unload' })
