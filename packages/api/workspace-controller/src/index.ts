@@ -226,6 +226,9 @@ export class WorkspaceController extends TypertRemoteService {
         case 'baseline':
           yield { type: 'baseline', value: filtered(frame.value) }
           break
+        case 'access':
+          yield { type: 'replace', value: filtered(this.feed.baseline()) }
+          break
         case 'upsert': {
           const workspaceId = frame.workspace.workspaceId
           if (visible(workspaceId)) {
