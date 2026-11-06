@@ -12,6 +12,7 @@ import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionQueryError, type SessionObservation } from '@deepseek-ai/dsh-session-query'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-typert-registry'
+import { ExecutionWorkspaceUnavailableError, platformExecutionWorkspaceDirectory } from '@deepseek-ai/dsh-workspace'
 
 /** Cold Session identity absent from persistence. */
 export class ApiSessionNotFound extends Error {}
@@ -446,7 +447,12 @@ export class ApiSessionAgentController {
 
   private async createAgent(sessionId: SessionId, cwd: string, composition: ApiSessionComposition): Promise<Agent> {
     try {
-      await mkdir(cwd, { recursive: true })
+      const remote = await platformExecutionWorkspaceDirectory(this.ctx, cwd)
+      if (remote === undefined) await mkdir(cwd, { recursive: true })
+      else {
+        if (remote.status !== 'ok') throw new ExecutionWorkspaceUnavailableError(remote.path, remote)
+        cwd = remote.path
+      }
     } catch (error: unknown) {
       throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
     }
