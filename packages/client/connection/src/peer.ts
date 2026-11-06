@@ -39,6 +39,7 @@ export class Peer implements PeerScope {
    */
   constructor(owner: Context, options: PeerOptions) {
     this.principal = options.principal
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- other packages merge non-owner kinds into PrincipalMap.
     if (options.actorPrincipal !== undefined && (options.principal.kind !== 'owner' || options.actorPrincipal.kind === 'owner')) throw new Error('Actor requires native owner authority and a named non-owner identity')
     Object.defineProperty(this, 'actorPrincipal', { value: options.actorPrincipal === undefined ? undefined : Object.freeze({ ...options.actorPrincipal }), enumerable: true, writable: false, configurable: false })
     this.interactions = options.interactions ?? 'answer'

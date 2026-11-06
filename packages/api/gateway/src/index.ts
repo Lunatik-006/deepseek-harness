@@ -497,6 +497,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
   }
 
   private canAnswerInteraction(principal: Principal, agentId: string): boolean {
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- other packages merge non-owner kinds into PrincipalMap.
     return principal.kind === 'owner' || this.interactionPolicy?.(principal, agentId) === true
   }
 
@@ -630,6 +631,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
     let resolved = false
     let resources: readonly RemoteAccessResource[] | undefined
     for (const client of this.remoteEventClients.values()) {
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- other packages merge non-owner kinds into PrincipalMap.
       if (client.principal.kind !== 'owner') {
         // A non-owner receives the whole notification or nothing: its resources decide, payloads are never trimmed,
         // and a notification with invalid resources reaches no non-owner.

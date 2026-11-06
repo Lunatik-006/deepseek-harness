@@ -187,92 +187,109 @@ export class HostConnectionService extends Service implements HostConnectionHand
 
   /** Register the operator's optional mapping from native Desktop proof to one human. */
   registerDesktopLocalOwner(provider: NativeDesktopLocalOwnerProvider): () => void {
-    if (process.platform !== "win32" || this.desktopLocalOwner) throw new Error("Desktop local admission is unavailable or already registered");
-    const secret = this.desktopLocalSecret;
-    if (typeof secret !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(secret)) throw new Error("Desktop main transport proof is missing");
-    if (!provider || typeof provider.principal !== "function" || typeof provider.accepts !== "function" || typeof provider.acceptsPeer !== "function" || typeof provider.createApiPeer !== "function") throw new Error("Invalid Desktop local admission provider");
-    const principal = provider.principal();
-    if (principal.kind === "owner" || !provider.accepts(principal)) throw new Error("Desktop owner must map to a configured non-owner principal");
-    const registration = { provider, secret };
-    this.desktopLocalOwner = registration;
-    this.desktopLocalOwnerRequired = true;
-    return () => { if (this.desktopLocalOwner === registration) this.desktopLocalOwner = undefined; };
+    if (process.platform !== 'win32' || this.desktopLocalOwner) throw new Error('Desktop local admission is unavailable or already registered')
+    const secret = this.desktopLocalSecret
+    if (typeof secret !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(secret)) throw new Error('Desktop main transport proof is missing')
+    if (typeof provider.principal !== 'function' || typeof provider.accepts !== 'function' || typeof provider.acceptsPeer !== 'function' || typeof provider.createApiPeer !== 'function') throw new Error('Invalid Desktop local admission provider')
+    const principal = provider.principal()
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- other packages merge non-owner kinds into PrincipalMap.
+    if (principal.kind === 'owner' || !provider.accepts(principal)) throw new Error('Desktop owner must map to a configured non-owner principal')
+    const registration = { provider, secret }
+    this.desktopLocalOwner = registration
+    this.desktopLocalOwnerRequired = true
+    return () => { if (this.desktopLocalOwner === registration) this.desktopLocalOwner = undefined }
   }
   private isDesktopLocalTransport(request: ConnectionTrustRequest): boolean {
-    const registration = this.desktopLocalOwner;
-    if (!registration || this.disposed || process.platform !== "win32") return false;
-    const socket = request.socket;
-    const loopback = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
-    const remote = socket?.remoteAddress, local = socket?.localAddress;
-    if (!socket || remote === undefined || local === undefined || !loopback.has(remote) || !loopback.has(local) || !Number.isInteger(socket.localPort)) return false;
-    const read = (name: string): string | undefined => request.headers instanceof Headers ? request.headers.get(name) ?? undefined : typeof request.headers[name] === "string" ? request.headers[name] : undefined;
-    const names = request.headers instanceof Headers ? [...request.headers.keys()] : Object.keys(request.headers);
-    if (names.some(name => /^(?:forwarded|via|x-real-ip|x-original-host|x-original-url|x-dsh-pocket)$/i.test(name) || /^(?:x-forwarded-|tailscale-|cf-)/i.test(name))) return false;
-    if (!this.isTrusted(request)) return false;
-    const actual = read("x-dsh-desktop-owner");
-    if (typeof actual !== "string") return false;
-    const supplied = Buffer.from(actual), expected = Buffer.from(registration.secret);
-    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return false;
+    const registration = this.desktopLocalOwner
+    if (!registration || this.disposed || process.platform !== 'win32') return false
+    const socket = request.socket
+    const loopback = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+    const remote = socket?.remoteAddress
+    const local = socket?.localAddress
+    if (!socket || remote === undefined || local === undefined || !loopback.has(remote) || !loopback.has(local)
+      || !Number.isInteger(socket.localPort)) return false
+    const read = (name: string): string | undefined => request.headers instanceof Headers
+      ? request.headers.get(name) ?? undefined
+      : typeof request.headers[name] === 'string' ? request.headers[name] : undefined
+    const names = request.headers instanceof Headers ? [...request.headers.keys()] : Object.keys(request.headers)
+    const forwarded = /^(?:forwarded|via|x-real-ip|x-original-host|x-original-url|x-dsh-pocket)$/i
+    const proxied = /^(?:x-forwarded-|tailscale-|cf-)/i
+    if (names.some(name => forwarded.test(name) || proxied.test(name))) return false
+    if (!this.isTrusted(request)) return false
+    const actual = read('x-dsh-desktop-owner')
+    if (typeof actual !== 'string') return false
+    const supplied = Buffer.from(actual)
+    const expected = Buffer.from(registration.secret)
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return false
     try {
-      const protocol = this.owner.get("webServer")?.protocol === "https:" ? "https:" : "http:";
-      const authority = new URL(protocol + "//" + read("host"));
-      if (authority.username || authority.password || authority.pathname !== "/" || authority.search || authority.hash || !["127.0.0.1", "localhost", "[::1]"].includes(authority.hostname)) return false;
-      return Number(authority.port || (protocol === "https:" ? "443" : "80")) === socket.localPort;
-    } catch { return false; }
+      const protocol = this.owner.get('webServer')?.protocol === 'https:' ? 'https:' : 'http:'
+      const authority = new URL(`${protocol}//${read('host') ?? ''}`)
+      const hosts = ['127.0.0.1', 'localhost', '[::1]']
+      if (authority.username || authority.password || authority.pathname !== '/' || authority.search || authority.hash
+        || !hosts.includes(authority.hostname)) return false
+      return Number(authority.port || (protocol === 'https:' ? '443' : '80')) === socket.localPort
+    } catch { return false }
   }
   /** Verify main transport and the existing signed, audience-bound native cookie. */
   verifyDesktopLocalOwner(request: ConnectionTrustRequest): NativeDesktopOwnerProof | undefined {
-    if (!this.isDesktopLocalTransport(request)) return undefined;
-    const secure = this.owner.get("webServer")?.protocol === "https:";
-    const credential = this.browserAuth.desktopOwnerCredential(request, secure);
-    const registration = this.desktopLocalOwner;
-    if (!credential || !registration) return undefined;
+    if (!this.isDesktopLocalTransport(request)) return undefined
+    const secure = this.owner.get('webServer')?.protocol === 'https:'
+    const credential = this.browserAuth.desktopOwnerCredential(request, secure)
+    const registration = this.desktopLocalOwner
+    if (!credential || !registration) return undefined
     try {
-      const principal = registration.provider.principal();
-      if (principal.kind === "owner" || !registration.provider.accepts(principal)) return undefined;
+      const principal = registration.provider.principal()
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- other packages merge non-owner kinds into PrincipalMap.
+      if (principal.kind === 'owner' || !registration.provider.accepts(principal)) return undefined
       if (credential.version === 2) {
-        const record = this.peers.get(credential.id);
-        if (!record || record.peer.signal.aborted || !registration.provider.acceptsPeer(record.peer)) return undefined;
+        const record = this.peers.get(credential.id)
+        if (!record || record.peer.signal.aborted || !registration.provider.acceptsPeer(record.peer)) return undefined
       }
-      return Object.freeze({ kind: credential.version === 2 ? "api" : "browser", authority: credential.authority,
-        expiresAt: credential.expiresAt, loginId: "native-desktop:" + credential.authority + (credential.version === 2 ? ":" + credential.id : ""),
-        ...(credential.version === 2 ? { peerId: credential.id } : {}) });
-    } catch { return undefined; }
+      const loginId = `native-desktop:${credential.authority}`
+      return Object.freeze({
+        kind: credential.version === 2 ? 'api' : 'browser',
+        authority: credential.authority,
+        expiresAt: credential.expiresAt,
+        loginId: credential.version === 2 ? `${loginId}:${credential.id}` : loginId,
+        ...(credential.version === 2 ? { peerId: credential.id } : {}),
+      })
+    } catch { return undefined }
   }
   /** Accept only live version-2 records owned by the registered provider. */
   verifyRegisteredActorCredential(request: ConnectionTrustRequest): NativeRegisteredActorCredential | undefined {
-    if (this.disposed || !this.isTrusted(request)) return undefined;
-    const credential = this.browserAuth.registeredActorCredential(request, this.owner.get("webServer")?.protocol === "https:");
-    if (!credential) return undefined;
-    const record = this.peers.get(credential.id);
-    if (!record?.platformActor || record.peer.signal.aborted) return undefined;
+    if (this.disposed || !this.isTrusted(request)) return undefined
+    const secure = this.owner.get('webServer')?.protocol === 'https:'
+    const credential = this.browserAuth.registeredActorCredential(request, secure)
+    if (!credential) return undefined
+    const record = this.peers.get(credential.id)
+    if (!record?.platformActor || record.peer.signal.aborted) return undefined
     try {
-      if (this.browserAdmission?.acceptsPeer?.(record.peer) !== true) return undefined;
-      return { peer: record.peer, cookie: credential.cookie, expiresAt: credential.expiresAt, sharedBrowser: record.sharedBrowser === true };
-    } catch { return undefined; }
+      if (this.browserAdmission?.acceptsPeer?.(record.peer) !== true) return undefined
+      return { peer: record.peer, cookie: credential.cookie, expiresAt: credential.expiresAt, sharedBrowser: record.sharedBrowser === true }
+    } catch { return undefined }
   }
   /** Issue the existing version-2 cookie for a provider-owned human Peer. */
   createActorApiCredential(peer: PeerScope): NativeActorApiCredential {
-    if (this.disposed || !peer || peer.signal.aborted) throw new Error("A live human API Peer is required");
-    if (this.browserAdmission?.acceptsPeer?.(peer) !== true) throw new Error("The API Peer is not owned by the registered admission provider");
-    const server = this.owner.get("webServer");
-    const port = server?.port;
-    if (server === undefined || port === undefined || !Number.isInteger(port) || port <= 0) throw new Error("Native application listener is unavailable");
-    const existing = this.peers.get(peer.id);
-    if (existing && existing.peer !== peer) throw new Error("Native API Peer identity collision");
+    if (this.disposed || peer.signal.aborted) throw new Error('A live human API Peer is required')
+    if (this.browserAdmission?.acceptsPeer?.(peer) !== true) throw new Error('The API Peer is not owned by the registered admission provider')
+    const server = this.owner.get('webServer')
+    const port = server?.port
+    if (server === undefined || port === undefined || !Number.isInteger(port) || port <= 0) throw new Error('Native application listener is unavailable')
+    const existing = this.peers.get(peer.id)
+    if (existing && existing.peer !== peer) throw new Error('Native API Peer identity collision')
     if (!existing) {
-      this.peers.set(peer.id, { peer, ownsSocket: false, platformActor: true, sharedBrowser: true });
-      peer.signal.addEventListener("abort", () => { if (this.peers.get(peer.id)?.peer === peer) this.peers.delete(peer.id); }, { once: true });
+      this.peers.set(peer.id, { peer, ownsSocket: false, platformActor: true, sharedBrowser: true })
+      peer.signal.addEventListener('abort', () => { if (this.peers.get(peer.id)?.peer === peer) this.peers.delete(peer.id) }, { once: true })
     }
-    return this.browserAuth.issueActorApiCredential("127.0.0.1:" + port, peer.id, server.protocol === "https:");
+    return this.browserAuth.issueActorApiCredential(`127.0.0.1:${port}`, peer.id, server.protocol === 'https:')
   }
   private publishDesktopLocalPeer(interactions: ConnectionInteractions, credential: NativeApiCredentialSeed): PeerId {
-    if (!this.desktopLocalOwner || !credential || !Number.isFinite(credential.expiresAt)) throw new Error("Desktop native credential is required");
-    const peer = this.desktopLocalOwner.provider.createApiPeer({ ...credential, interactions });
-    if (!peer || peer.signal.aborted || !this.desktopLocalOwner.provider.acceptsPeer(peer)) throw new Error("Desktop API principal is invalid");
-    this.peers.set(peer.id, { peer, ownsSocket: false, platformActor: true });
-    peer.signal.addEventListener("abort", () => { if (this.peers.get(peer.id)?.peer === peer) this.peers.delete(peer.id); }, { once: true });
-    return peer.id;
+    if (!this.desktopLocalOwner || !Number.isFinite(credential.expiresAt)) throw new Error('Desktop native credential is required')
+    const peer = this.desktopLocalOwner.provider.createApiPeer({ ...credential, interactions })
+    if (peer.signal.aborted || !this.desktopLocalOwner.provider.acceptsPeer(peer)) throw new Error('Desktop API principal is invalid')
+    this.peers.set(peer.id, { peer, ownsSocket: false, platformActor: true })
+    peer.signal.addEventListener('abort', () => { if (this.peers.get(peer.id)?.peer === peer) this.peers.delete(peer.id) }, { once: true })
+    return peer.id
   }
 
   /** Read actor-specific globals only after proving the actual native Desktop request. */
@@ -300,7 +317,11 @@ export class HostConnectionService extends Service implements HostConnectionHand
   }
 
   /** Create one in-process Peer owned by the Context that read this service. */
-  createPeer(options: { readonly principal: Principal; readonly actorPrincipal?: Principal; readonly interactions?: ConnectionInteractions }): PeerScope {
+  createPeer(options: {
+    readonly principal: Principal
+    readonly actorPrincipal?: Principal
+    readonly interactions?: ConnectionInteractions
+  }): PeerScope {
     return new Peer(this.ctx, options)
   }
 

@@ -335,58 +335,58 @@ export interface ClientConnectionRpc {
 }
 
 export interface NativeLoopbackSocketFacts {
-  readonly remoteAddress?: string | undefined;
-  readonly remotePort?: number | undefined;
-  readonly localAddress?: string | undefined;
-  readonly localPort?: number | undefined;
+  readonly remoteAddress?: string | undefined
+  readonly remotePort?: number | undefined
+  readonly localAddress?: string | undefined
+  readonly localPort?: number | undefined
 }
 export interface NativeDesktopTrustRequest extends ConnectionTrustRequest {
   /** node:http supplies this; no JSON or HTTP header supplies socket facts. */
-  readonly socket?: NativeLoopbackSocketFacts;
+  readonly socket?: NativeLoopbackSocketFacts
 }
 export interface NativeApiCredentialSeed {
-  readonly authority: string;
-  readonly expiresAt: number;
+  readonly authority: string
+  readonly expiresAt: number
 }
 export interface NativeActorApiCredential {
-  readonly cookie: string;
-  readonly setCookie: string;
-  readonly expiresAt: number;
+  readonly cookie: string
+  readonly setCookie: string
+  readonly expiresAt: number
 }
 export interface NativeRegisteredActorCredential {
-  readonly peer: PeerScope;
-  readonly cookie: string;
-  readonly expiresAt: number;
-  readonly sharedBrowser: boolean;
+  readonly peer: PeerScope
+  readonly cookie: string
+  readonly expiresAt: number
+  readonly sharedBrowser: boolean
 }
 export type NativeDesktopOwnerProof = NativeApiCredentialSeed & {
-  readonly kind: 'browser' | 'api';
-  readonly loginId: string;
-  readonly peerId?: PeerId;
-};
+  readonly kind: 'browser' | 'api'
+  readonly loginId: string
+  readonly peerId?: PeerId
+}
 export interface NativeDesktopLocalOwnerProvider {
   /** Trusted server installation chooses the mapped principal, never the request. */
-  principal(): Principal;
-  accepts(principal: Principal): boolean;
-  acceptsPeer(peer: PeerScope): boolean;
-  createApiPeer(request: NativeApiCredentialSeed & { readonly interactions: 'answer' | 'none' }): PeerScope;
+  principal(): Principal
+  accepts(principal: Principal): boolean
+  acceptsPeer(peer: PeerScope): boolean
+  createApiPeer(request: NativeApiCredentialSeed & { readonly interactions: 'answer' | 'none' }): PeerScope
   /** Server-owned actor globals, ready before the native renderer starts. */
-  bootstrap?(): Promise<readonly NativeDesktopBootInjection[]> | readonly NativeDesktopBootInjection[];
+  bootstrap?(): Promise<readonly NativeDesktopBootInjection[]> | readonly NativeDesktopBootInjection[]
 }
 /** One ordinary global boot contribution; authentication data never goes here. */
 export interface NativeDesktopBootInjection {
-  readonly kind: 'global';
-  readonly name: string;
-  readonly value: unknown;
+  readonly kind: 'global'
+  readonly name: string
+  readonly value: unknown
 }
 export interface NativeDesktopLocalAdmission {
-  registerDesktopLocalOwner(provider: NativeDesktopLocalOwnerProvider): () => void;
-  verifyDesktopLocalOwner(request: NativeDesktopTrustRequest): NativeDesktopOwnerProof | undefined;
+  registerDesktopLocalOwner(provider: NativeDesktopLocalOwnerProvider): () => void
+  verifyDesktopLocalOwner(request: NativeDesktopTrustRequest): NativeDesktopOwnerProof | undefined
   /** Server-private issuer/validator, intentionally not Remote endpoints. */
-  createActorApiCredential(peer: PeerScope): NativeActorApiCredential;
-  verifyRegisteredActorCredential(request: ConnectionTrustRequest): NativeRegisteredActorCredential | undefined;
+  createActorApiCredential(peer: PeerScope): NativeActorApiCredential
+  verifyRegisteredActorCredential(request: ConnectionTrustRequest): NativeRegisteredActorCredential | undefined
   /** Private native carrier route; absent or invalid proof has no projection. */
-  desktopBootstrap(request: ConnectionTrustRequest): Promise<readonly NativeDesktopBootInjection[] | undefined>;
+  desktopBootstrap(request: ConnectionTrustRequest): Promise<readonly NativeDesktopBootInjection[] | undefined>
 }
 
 
@@ -395,7 +395,10 @@ export interface ConnectionBrowserAdmission {
   admit(request: ConnectionTrustRequest): PeerAdmission
   authorizeIndex(request: ConnectionIndexRequest, response: ConnectionIndexResponse): boolean
   /** Include the current principal's RemoteAccess baseline and application state. */
-  bootstrap?(request: ConnectionTrustRequest, peer: PeerScope): Promise<readonly NativeDesktopBootInjection[]> | readonly NativeDesktopBootInjection[]
+  bootstrap?(
+    request: ConnectionTrustRequest,
+    peer: PeerScope,
+  ): Promise<readonly NativeDesktopBootInjection[]> | readonly NativeDesktopBootInjection[]
   /** Accept only the exact live Peer instances owned by this provider. */
   acceptsPeer?(peer: PeerScope): boolean
   /** Authorize an additional RPC channel before decoding its request body. */

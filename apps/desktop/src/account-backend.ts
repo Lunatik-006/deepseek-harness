@@ -84,7 +84,12 @@ export interface DesktopAccountBackend {
  * @param nativeHeaders - Main-owned local proof for this already-selected Host.
  * @returns account operations; watch callers own their subscriptions.
  */
-export function desktopAccountBackend(origin: string, invoke: AccountInvoke, cookies: () => Promise<string>, nativeHeaders: Readonly<Record<string, string>> = {}): DesktopAccountBackend {
+export function desktopAccountBackend(
+  origin: string,
+  invoke: AccountInvoke,
+  cookies: () => Promise<string>,
+  nativeHeaders: Readonly<Record<string, string>> = {},
+): DesktopAccountBackend {
   const call = async (method: string, args: Record<string, unknown> = {}): Promise<AccountView> =>
     accountView(await invoke({ namespace: 'account', method, args }))
   return {
