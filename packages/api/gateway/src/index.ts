@@ -489,7 +489,11 @@ export class TypertGatewayService extends Service implements TypertGateway {
     return cancellableStream(source, prepared.endpoint, prepared.invocation)
   }
 
-  /** Install one session-scoped answer policy; the registration owns its disposal. */
+  /**
+   * Install one session-scoped answer policy; the registration owns its disposal.
+   * @param policy - whether a principal may answer an interaction for one agent.
+   * @returns disposer withdrawing the policy.
+   */
   registerInteractionPolicy(policy: (principal: Principal, agentId: string) => boolean): () => void {
     if (this.interactionPolicy) throw new Error('interaction policy already registered')
     this.interactionPolicy = policy

@@ -206,9 +206,17 @@ export interface HostConnectionRpc {
 
 /** Host `ctx.connection` members consumed by transport-independent adapters. */
 export interface HostConnectionHandle extends NativeDesktopLocalAdmission {
-  /** Register the deployment's sole authenticated browser admission provider. */
+  /**
+   * Register the deployment's sole authenticated browser admission provider.
+   * @param provider - the installation's carrier-admission policy.
+   * @returns disposer withdrawing the provider.
+   */
   registerBrowserAdmission(provider: ConnectionBrowserAdmission): () => void
-  /** Resolve per-request globals after authenticating the actual carrier request. */
+  /**
+   * Resolve per-request globals after authenticating the actual carrier request.
+   * @param request - the candidate index carrier.
+   * @returns the admitted actor's boot globals, or undefined when no admission is required.
+   */
   indexInjections(request: ConnectionTrustRequest): Promise<readonly NativeDesktopBootInjection[] | undefined>
   /** Generic RPC channel registry. */
   readonly rpc: HostConnectionRpc
@@ -334,41 +342,67 @@ export interface ClientConnectionRpc {
   ) => AsyncIterable<unknown>
 }
 
+/** Loopback socket facts of the actual carrier; node:http supplies them, never a JSON or HTTP field. */
 export interface NativeLoopbackSocketFacts {
+  /** Address of the accepted peer. */
   readonly remoteAddress?: string | undefined
+  /** Port of the accepted peer. */
   readonly remotePort?: number | undefined
+  /** Address of the local listener. */
   readonly localAddress?: string | undefined
+  /** Port of the local listener the request reached. */
   readonly localPort?: number | undefined
 }
+/** Trust request for the native Desktop carrier, with the socket facts only node:http can attest. */
 export interface NativeDesktopTrustRequest extends ConnectionTrustRequest {
   /** node:http supplies this; no JSON or HTTP header supplies socket facts. */
   readonly socket?: NativeLoopbackSocketFacts
 }
+/** Server-owned credential facts bound to one authority before a live Peer credential is issued. */
 export interface NativeApiCredentialSeed {
+  /** Authority the credential is audience-bound to. */
   readonly authority: string
+  /** Absolute expiry instant in epoch milliseconds. */
   readonly expiresAt: number
 }
+/** Signed cookie set a provider-owned actor Peer authenticates with. */
 export interface NativeActorApiCredential {
+  /** Cookie header value for the owning main process. */
   readonly cookie: string
+  /** Set-Cookie value for the exchange response. */
   readonly setCookie: string
+  /** Absolute expiry instant in epoch milliseconds. */
   readonly expiresAt: number
 }
+/** A live provider-owned actor credential resolved from a request. */
 export interface NativeRegisteredActorCredential {
+  /** Live Peer the credential speaks for. */
   readonly peer: PeerScope
+  /** Cookie header value the request carried. */
   readonly cookie: string
+  /** Absolute expiry instant in epoch milliseconds. */
   readonly expiresAt: number
+  /** Whether the Peer is the shared browser identity rather than an API socket owner. */
   readonly sharedBrowser: boolean
 }
+/** Verified native Desktop owner proof returned by {@link NativeDesktopLocalAdmission.verifyDesktopLocalOwner}. */
 export type NativeDesktopOwnerProof = NativeApiCredentialSeed & {
+  /** Carrier class the proof came from. */
   readonly kind: 'browser' | 'api'
+  /** Stable login record id for the auditor. */
   readonly loginId: string
+  /** Live API Peer id carried by a version-2 credential. */
   readonly peerId?: PeerId
 }
+/** Installation-selected mapping from the native Desktop transport to its owner Peer. */
 export interface NativeDesktopLocalOwnerProvider {
   /** Trusted server installation chooses the mapped principal, never the request. */
   principal(): Principal
+  /** Whether the mapped principal is the one this installation admits. */
   accepts(principal: Principal): boolean
+  /** Whether the Peer is one this provider owns; authority is decided by Peer, not a principal string. */
   acceptsPeer(peer: PeerScope): boolean
+  /** Create the published API Peer from the same owner authority. */
   createApiPeer(request: NativeApiCredentialSeed & { readonly interactions: 'answer' | 'none' }): PeerScope
   /** Server-owned actor globals, ready before the native renderer starts. */
   bootstrap?(): Promise<readonly NativeDesktopBootInjection[]> | readonly NativeDesktopBootInjection[]
@@ -379,11 +413,15 @@ export interface NativeDesktopBootInjection {
   readonly name: string
   readonly value: unknown
 }
+/** Native Desktop admission surface: prove the owned loopback carrier and publish its actor Peer. */
 export interface NativeDesktopLocalAdmission {
+  /** Register the installation's sole Desktop owner provider; Windows only, single shot. */
   registerDesktopLocalOwner(provider: NativeDesktopLocalOwnerProvider): () => void
+  /** Verify the actual native transport and its signed cookie; returns nothing unless every proof holds. */
   verifyDesktopLocalOwner(request: NativeDesktopTrustRequest): NativeDesktopOwnerProof | undefined
   /** Server-private issuer/validator, intentionally not Remote endpoints. */
   createActorApiCredential(peer: PeerScope): NativeActorApiCredential
+  /** Resolve a registered actor credential to its live Peer without reviving anything. */
   verifyRegisteredActorCredential(request: ConnectionTrustRequest): NativeRegisteredActorCredential | undefined
   /** Private native carrier route; absent or invalid proof has no projection. */
   desktopBootstrap(request: ConnectionTrustRequest): Promise<readonly NativeDesktopBootInjection[] | undefined>

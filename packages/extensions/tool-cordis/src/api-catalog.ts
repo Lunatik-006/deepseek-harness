@@ -788,6 +788,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Host `ctx.connection` members consumed by transport-independent adapters.',
     methods: [
       {
+        signature: 'registerBrowserAdmission(provider: ConnectionBrowserAdmission): () => void',
+        description: 'Register the deployment\'s sole authenticated browser admission provider.',
+        parameters: [{ name: 'provider', description: 'the installation\'s carrier-admission policy.' }],
+        returns: 'disposer withdrawing the provider.',
+      },
+      {
+        signature: 'indexInjections(request: ConnectionTrustRequest): Promise<readonly NativeDesktopBootInjection[] | undefined>',
+        description: 'Resolve per-request globals after authenticating the actual carrier request.',
+        parameters: [{ name: 'request', description: 'the candidate index carrier.' }],
+        returns: 'the admitted actor\'s boot globals, or undefined when no admission is required.',
+      },
+      {
         signature: 'readonly rpc: HostConnectionRpc',
         description: 'Generic RPC channel registry.',
         parameters: [],
@@ -826,7 +838,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the credential\'s Peer, or the rejection status.',
       },
       {
-        signature: 'createPeer(options: { readonly principal: Principal; readonly interactions?: \'answer\' | \'none\' }): PeerScope',
+        signature: 'createPeer(options: { readonly principal: Principal; readonly actorPrincipal?: Principal; readonly interactions?: \'answer\' | \'none\' }): PeerScope',
         description: 'Create an independent in-process Peer, disposed with the Context that read `ctx.connection`.',
         parameters: [{ name: 'options', description: 'fixed principal and optional interaction participation (default `answer`).' }],
         returns: 'a new Peer distinct from every other Peer.',
@@ -835,7 +847,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'admitConnection(request: ConnectionTrustRequest): ConnectionAdmission',
         description: 'Claim a physical socket for an API Peer; browser sockets share their owner Peer.',
         parameters: [{ name: 'request', description: 'authenticated upgrade request headers.' }],
-        returns: 'the Peer and idempotent release, or 409 for duplicate API ownership. The carrier releases on socket termination or failed upgrade; release removes API admission synchronously without cancelling independent HTTP calls.',
+        returns: 'the Peer and idempotent release, or 409 for duplicate API ownership. The carrier releases on socket termination or failed upgrade; release removes API admission synchronously without cancelling independent HTTP calls. Provider-owned shared browser records retain their existing Peer lifetime.',
       },
       {
         signature: 'authorizeIndex(request: ConnectionIndexRequest, response: ConnectionIndexResponse): boolean',
@@ -4217,9 +4229,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'hasLiveClient(): boolean',
-        description: 'Check for an active owner Client event stream, the only kind that can answer forwarded waterfalls.',
+        description: 'Check for an active interaction-participating Client event stream.',
         parameters: [],
-        returns: 'whether an owner stream is open and has not been cancelled.',
+        returns: 'whether an eligible stream is open; each delivery still checks its session permission.',
       },
       {
         signature: 'getPendingRemoteEvents(): readonly PendingRemoteEventInfo[]',
@@ -4245,6 +4257,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Open one live stream Remote method without assuming a physical carrier.',
         parameters: [{ name: 'request', description: 'decoded endpoint, named wire arguments, and the Client uplink when the carrier has one.' }],
         returns: 'a cancellation-aware iterable over the business results.',
+      },
+      {
+        signature: 'registerInteractionPolicy(policy: (principal: Principal, agentId: string) => boolean): () => void',
+        description: 'Install one session-scoped answer policy; the registration owns its disposal.',
+        parameters: [{ name: 'policy', description: 'whether a principal may answer an interaction for one agent.' }],
+        returns: 'disposer withdrawing the policy.',
       },
     ],
   },
@@ -4368,6 +4386,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [],
         returns: 'the origin, for example `http://127.0.0.1:3080`.',
         throws: ['before `listen` binds a port, or when the bind address has no URL form.'],
+      },
+      {
+        signature: 'registerHttpPolicy(policy: (request: IncomingMessage) => boolean | Promise<boolean>): () => void',
+        description: 'Register one policy before raw HTTP route/fallback dispatch.',
+        parameters: [{ name: 'policy', description: 'the composing application\'s authorization of the actual request.' }],
+        returns: 'disposer; a withdrawn policy leaves HTTP closed until re-registered.',
       },
       {
         signature: 'register(route: WebRoute | WebResourceRoute): () => void',
@@ -5154,6 +5178,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [],
   },
   {
+    name: 'remote-access/invalidated',
+    mode: 'emit',
+    signature: '\'remote-access/invalidated\'(): void',
+    summary: 'Bindings or condition answers may have changed for every principal.',
+    description: 'Bindings or condition answers may have changed for every principal.',
+    parameters: [],
+  },
+  {
     name: 'schedule/changed',
     mode: 'emit',
     signature: '\'schedule/changed\'(): void',
@@ -5930,6 +5962,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ConnectionAdmission = {\n    readonly peer: PeerScope;\n    readonly release: () => Promise<void>;\n} | {\n    readonly rejection: 401 | 403 | 409;\n};',
   },
   {
+    name: 'ConnectionBrowserAdmission',
+    declaration: 'export interface ConnectionBrowserAdmission {\n    admit(request: ConnectionTrustRequest): PeerAdmission;\n    authorizeIndex(request: ConnectionIndexRequest, response: ConnectionIndexResponse): boolean;\n    bootstrap?(request: ConnectionTrustRequest, peer: PeerScope): Promise<readonly NativeDesktopBootInjection[]> | readonly NativeDesktopBootInjection[];\n    acceptsPeer?(peer: PeerScope): boolean;\n    authorizeChannel?(peer: PeerScope, channel: string): boolean;\n    authorizeFetch?(request: Request, peer: PeerScope): Promise<boolean> | boolean;\n}',
+  },
+  {
     name: 'ConnectionFetchHandler',
     declaration: 'export interface ConnectionFetchHandler {\n    requestBodyMode(request: {\n        readonly method: string;\n        readonly url: URL;\n    }): ConnectionRequestBodyMode;\n    fetch(request: Request, peer: PeerScope): Promise<Response>;\n}',
   },
@@ -5939,7 +5975,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ConnectionFetchRoute',
-    declaration: 'export interface ConnectionFetchRoute {\n    readonly path: string;\n    readonly methods: readonly ConnectionFetchMethod[];\n    readonly requestBody: ConnectionRequestBodyMode;\n    readonly fetch: (request: Request) => Promise<Response>;\n}',
+    declaration: 'export interface ConnectionFetchRoute {\n    readonly path: string;\n    readonly methods: readonly ConnectionFetchMethod[];\n    readonly requestBody: ConnectionRequestBodyMode;\n    readonly fetch: (request: Request, peer: PeerScope) => Promise<Response>;\n}',
   },
   {
     name: 'ConnectionIndexRequest',
@@ -5983,7 +6019,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ConnectionTrustRequest',
-    declaration: 'export interface ConnectionTrustRequest {\n    readonly headers: Headers | Readonly<Record<string, string | readonly string[] | undefined>>;\n}',
+    declaration: 'export interface ConnectionTrustRequest {\n    readonly socket?: NativeLoopbackSocketFacts;\n    readonly headers: Headers | Readonly<Record<string, string | readonly string[] | undefined>>;\n}',
   },
   {
     name: 'ContentBlockMap',
@@ -7306,8 +7342,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ModTier = \'prepend\' | \'user\' | \'append\' | \'builtin\' | \'core\';',
   },
   {
+    name: 'NativeDesktopBootInjection',
+    declaration: 'export interface NativeDesktopBootInjection {\n    readonly kind: \'global\';\n    readonly name: string;\n    readonly value: unknown;\n}',
+  },
+  {
     name: 'NativeFileApplication',
     declaration: 'export interface NativeFileApplication {\n    readonly id: string;\n    readonly name: string;\n    readonly default: boolean;\n    readonly icon: string | null;\n}',
+  },
+  {
+    name: 'NativeLoopbackSocketFacts',
+    declaration: 'export interface NativeLoopbackSocketFacts {\n    readonly remoteAddress?: string | undefined;\n    readonly remotePort?: number | undefined;\n    readonly localAddress?: string | undefined;\n    readonly localPort?: number | undefined;\n}',
   },
   {
     name: 'NpmFileSource',
@@ -7423,7 +7467,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PeerScope',
-    declaration: 'export interface PeerScope {\n    readonly id: PeerId;\n    readonly ctx: Context;\n    readonly principal: Principal;\n    readonly signal: AbortSignal;\n    readonly interactions: \'answer\' | \'none\';\n    dispose(): Promise<void>;\n}',
+    declaration: 'export interface PeerScope {\n    readonly id: PeerId;\n    readonly ctx: Context;\n    readonly principal: Principal;\n    readonly actorPrincipal?: Principal;\n    readonly signal: AbortSignal;\n    readonly interactions: \'answer\' | \'none\';\n    dispose(): Promise<void>;\n}',
   },
   {
     name: 'PendingModule',

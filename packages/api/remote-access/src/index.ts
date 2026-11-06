@@ -39,7 +39,10 @@ declare module '@deepseek-ai/cordis' {
     remoteAccess: RemoteAccessService
   }
   interface Events {
-    /** Bindings or condition answers may have changed for every principal. */
+    /**
+     * Bindings or condition answers may have changed for every principal.
+     * @mode emit
+     */
     'remote-access/invalidated'(): void
   }
 }
