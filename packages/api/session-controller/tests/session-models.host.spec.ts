@@ -25,7 +25,15 @@ import type { SessionPromptRequest, SessionRequestId } from '../src/types.ts'
 import { buildModelCatalog, hasProviderApiKey } from '../src/catalog.ts'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
+import type { PeerId, Principal, RemoteInvocation } from '@deepseek-ai/dsh-typert-protocol'
 import { createSessionTestController, createSessionTestRemote } from './test-remote.ts'
+
+declare module '@deepseek-ai/dsh-typert-protocol' {
+  interface PrincipalMap {
+    /** Test-only platform caller holding native owner authority. */
+    'platform-human': { readonly kind: 'platform-human'; readonly id: string; readonly role: 'owner' }
+  }
+}
 
 function request<P>(payload: P): P {
   return payload
@@ -931,4 +939,47 @@ it.each([new Error('catalog disconnected'), 'catalog disconnected'])('reports ca
     await expect(modelAvailable(ctx, { provider: 'deepseek-official', model: 'deepseek-chat' }))
       .rejects.toMatchObject({ code: 'session/model-unavailable', message: 'catalog disconnected' })
   } finally { read.mockRestore(); await ctx.fiber.dispose() }
+})
+
+describe('Session model persistence authority', () => {
+  /** Call one Remote method through a caller-derived Context carrying this principal. */
+  function caller(ctx: Context, principal: Principal): Context {
+    const signal = new AbortController().signal
+    const invocation: RemoteInvocation = {
+      request: { namespace: 'session', method: 'selectModel', args: {} },
+      service: 'sessionController',
+      peer: { id: 'model-authority-peer' as PeerId, ctx, principal, interactions: 'answer', signal, dispose: async () => {} },
+      signal,
+      uplink: <In>(): AsyncIterable<In> => ({ [Symbol.asyncIterator]: () => ({ next: async () => ({ done: true, value: undefined }) }) }),
+    }
+    return ctx.extend({ invocation })
+  }
+
+  it('keeps the Host default when a platform-human changes the Session model', async () => {
+    const saved: Array<{ provider: string; model: string }> = []
+    const { ctx, agent, sessionId } = await harness()
+    await createSessionTestController(ctx, {
+      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
+      cwd: '/tmp',
+      saveDefaultModelSelection: async (selection) => {
+        saved.push({ provider: selection.provider, model: selection.model })
+      },
+    })
+    onTestFinished(() => ctx.fiber.dispose())
+
+    await caller(ctx, { kind: 'platform-human', id: 'owner', role: 'owner' }).sessionController.selectModel({
+      sessionId,
+      provider: 'deepseek-official',
+      model: 'deepseek-reasoner',
+    })
+    expect(agent.model.current()).toMatchObject({ provider: 'deepseek-official', model: 'deepseek-reasoner' })
+    expect(saved).toEqual([])
+
+    await caller(ctx, { kind: 'owner' }).sessionController.selectModel({
+      sessionId,
+      provider: 'deepseek-official',
+      model: 'deepseek-chat',
+    })
+    expect(saved).toEqual([{ provider: 'deepseek-official', model: 'deepseek-chat' }])
+  })
 })

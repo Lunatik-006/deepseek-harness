@@ -1,14 +1,15 @@
 /**
  * Shared execution plumbing for the `glob` / `grep` search tools: the
- * package-owned `SEARCH_*` error vocabulary, one spawn helper that runs the
- * PACKAGED ripgrep binary (`@vscode/ripgrep`) with a plain argv vector and
- * returns complete raw stdout, the best-effort formatted-result spill handoff,
- * and workdir-relative path display.
+ * package-owned `SEARCH_*` error vocabulary, one spawn helper that runs
+ * ripgrep resolved inside the calling Session's execution world with a plain
+ * argv vector and returns complete raw stdout, the best-effort formatted-result
+ * spill handoff, and workdir-relative path display.
  *
  * Both tools execute as ordinary foreground spawns through `ctx.subprocess` —
  * never `ctx.shell`, never `ctx.shell.start()`, never a model-visible background
- * task. The ripgrep binary ships inside the npm package, so no system `rg`
- * install is required, and no shell layer exists between the argv vector and
+ * task. A native deployment ships the ripgrep binary inside the npm package, so
+ * no system `rg` install is required; a mounted project world resolves its own
+ * executable instead. No shell layer exists between the argv vector and
  * ripgrep, so no shell quoting is involved. Raw `rg` stdout is an internal
  * transport detail: the tools request a per-run stdout capture budget from the
  * subprocess seam, parse only complete in-memory stdout within
@@ -184,9 +185,42 @@ export function resolveRgPath(): Promise<string> {
 }
 
 /**
- * Run the packaged ripgrep binary with a plain argv vector and return its
- * complete raw stdout. The working directory is the calling agent's session
- * current directory when available, else
+ * Resolve the ripgrep binary inside the calling Session's execution world.
+ *
+ * A mounted project world (for example an SSH execution binding) has its own
+ * filesystem and PATH, so a control-host lookup would search the wrong world.
+ * The packaged `@vscode/ripgrep` binary stays the first candidate because a
+ * native local deployment ships ripgrep there and never required `rg` on PATH;
+ * a world that cannot see that absolute path falls back to the bare command
+ * name in the same world.
+ * @param ctx - the plugin context; resolution goes through its `subprocess` service.
+ * @param signal - caller cancellation forwarded to executable lookup.
+ * @returns an executable path valid in the execution world.
+ */
+async function resolveRipgrep(ctx: Context, signal: AbortSignal): Promise<string> {
+  const candidates: string[] = []
+  try {
+    candidates.push(await resolveRgPath())
+  } catch {
+    // A missing or corrupt platform package is not fatal yet: the execution
+    // world may still provide `rg` itself.
+  }
+  candidates.push('rg')
+  let failure: unknown
+  for (const candidate of candidates) {
+    try {
+      return await ctx.subprocess.resolveExecutable(candidate, undefined, signal)
+    } catch (error: unknown) {
+      failure = error
+    }
+  }
+  throw failure
+}
+
+/**
+ * Run ripgrep, resolved in the Session's execution world, with a plain argv
+ * vector and return its complete raw stdout. The working directory is the
+ * calling agent's session current directory when available, else
  * `process.cwd()`. `exec.signal` is forwarded so the cooperative tool timeout
  * (`@deepseek-ai/dsh-tool-call-timeout-policy`) and caller cancellation terminate the
  * process tree.
@@ -237,7 +271,7 @@ export async function runRipgrep(
   let handle: SubprocessHandle
   try {
     handle = ctx.subprocess.spawn({
-      argv: [await resolveRgPath(), '--no-config', ...argv],
+      argv: [await resolveRipgrep(ctx, exec.signal), '--no-config', ...argv],
       cwd: workdir,
       stdio: {
         stdin: 'ignore',

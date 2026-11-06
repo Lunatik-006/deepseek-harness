@@ -19,6 +19,7 @@ import WorkspaceRegistry, {
   WorkspaceMoveInvalidError,
   WorkspaceOrderInvalidError,
 } from '../src/index.ts'
+import type { ExecutionWorkspaceDirectory } from '../src/execution-directory.ts'
 import type { WorkspaceDomainState, WorkspaceRecord } from '../src/index.ts'
 import { defaultWorkspaceTitle, fullyQualifiedWorkspacePath } from '../src/paths.ts'
 import * as workspacePaths from '../src/paths.ts'
@@ -39,6 +40,8 @@ interface HarnessOptions {
   liveSessions?: SessionHeader[]
   sessionStore?: boolean
   backend?: StorageBackend
+  /** Configured execution bridge consulted for every directory operation. */
+  execution?: (path: string) => ExecutionWorkspaceDirectory | undefined
 }
 
 /** Boot the real storage/domain/registry composition over controllable header-only peers. */
@@ -70,6 +73,10 @@ async function harness(options: HarnessOptions = {}) {
 
   const changes: DomainChanged[] = []
   ctx.on('domain/changed', (change) => { changes.push(change) })
+  if (options.execution !== undefined) {
+    const resolve = options.execution
+    ctx.provide('platformExecution', { resolveWorkspaceDirectory: async (path: string) => resolve(path) })
+  }
   const fiber = await ctx.plugin(WorkspaceRegistry)
   const initChanges = [...changes]
   changes.length = 0
@@ -1535,6 +1542,94 @@ describe('first-use Workspace preparation', () => {
     expect(storedState(pool).defaultWorkspaceId).toBeUndefined()
     await expect(realpath(join(h.directoryRoot, 'nested', 'Workspace'))).resolves.toBe(join(h.directoryRoot, 'nested', 'Workspace'))
     expect(await h.registry.initializeDefault(h.resolveDirectory)).toBeDefined()
+  })
+})
+
+describe('configured execution directories', () => {
+  const managed = (path: string, status: 'ok' | 'missing-dir' = 'ok'): ExecutionWorkspaceDirectory => ({ path, status })
+
+  it('creates and resolves a managed workspace from the executor spelling without a host fallback', async () => {
+    const nativeDir = await makeDir('native-view')
+    const result = await harness({
+      execution: path => path === '/executor/alias' ? managed('/executor/world/project') : undefined,
+    })
+    onTestFinished(() => result.ctx.fiber.dispose())
+    const workspace = await result.registry.create('/executor/alias')
+    expect(workspace.path).toBe('/executor/world/project')
+    expect(result.registry.list()).toEqual([workspace])
+    expect(await result.registry.resolveByPath('/executor/alias')).toBe(workspace)
+    expect(await result.registry.resolveByPath(nativeDir)).toBeUndefined()
+  })
+
+  it('reads managed availability through the bridge instead of the host filesystem', async () => {
+    let status: 'ok' | 'missing-dir' = 'ok'
+    const result = await harness({ execution: () => managed('/executor/world/box', status) })
+    onTestFinished(() => result.ctx.fiber.dispose())
+    const workspace = await result.registry.create('/executor/alias')
+    expect(workspace.path).toBe('/executor/world/box')
+    status = 'missing-dir'
+    await expect(workspace.status()).resolves.toBe('missing-dir')
+  })
+
+  it('refuses a configured root the executor cannot verify', async () => {
+    const result = await harness({ execution: () => managed('/executor/world/offline', 'missing-dir') })
+    onTestFinished(() => result.ctx.fiber.dispose())
+    await expect(result.registry.create('/executor/alias')).rejects.toMatchObject({
+      name: 'ExecutionWorkspaceUnavailableError',
+      code: 'EXECUTION_WORKSPACE_UNAVAILABLE',
+    })
+  })
+
+  it('wraps a provider rejection as an unavailable configured root', async () => {
+    const result = await harness({
+      execution: () => { throw new Error('executor offline') },
+    })
+    onTestFinished(() => result.ctx.fiber.dispose())
+    const failure = await result.registry.create('/executor/alias').catch((error: unknown) => error)
+    expect(failure).toMatchObject({ name: 'ExecutionWorkspaceUnavailableError', code: 'EXECUTION_WORKSPACE_UNAVAILABLE' })
+    expect((failure as Error).cause).toMatchObject({ message: 'executor offline' })
+  })
+
+  it('rejects a malformed managed answer', async () => {
+    const result = await harness({
+      execution: () => ({ path: 'relative/path', status: 'ok' }),
+    })
+    onTestFinished(() => result.ctx.fiber.dispose())
+    await expect(result.registry.create('/executor/alias')).rejects.toThrow(/Invalid configured execution workspace resolution/)
+  })
+
+  it('initializes the default workspace from the managed spelling without creating a host directory', async () => {
+    const result = await harness({
+      liveSessions: [],
+      execution: () => managed('/executor/world/default'),
+    })
+    onTestFinished(() => result.ctx.fiber.dispose())
+    const workspace = await result.registry.initializeDefault(async () => '/executor/default-request')
+    expect(workspace?.path).toBe('/executor/world/default')
+  })
+
+  it('retains a managed session whose executor is temporarily unavailable', async () => {
+    let status: 'ok' | 'missing-dir' = 'missing-dir'
+    const dir = '/executor/world/project'
+    const id = WorkspaceId('managed-pending')
+    const pool = storedPool([[id, record(dir, ['pending'])]], { initialized: true, workspaceIds: [id] })
+    const result = await harness({
+      pool,
+      sessions: [header('pending', dir)],
+      execution: () => managed(dir, status),
+    })
+    onTestFinished(() => result.ctx.fiber.dispose())
+    const workspace = result.registry.get(id)!
+    expect(workspace.sessionIds).toEqual(['pending'])
+
+    await workspace.setTitle('Renamed')
+    expect(storedRecord(pool, id).sessionIds).toEqual(['pending'])
+    expect(workspace.sessionIds).toEqual(['pending'])
+
+    status = 'ok'
+    await result.registry.refreshExecutionDirectories()
+    expect(workspace.sessionIds).toEqual(['pending'])
+    await expect(workspace.status()).resolves.toBe('ok')
   })
 })
 

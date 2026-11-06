@@ -469,11 +469,20 @@ Durable workspace registry. Startup waits for `sessionPersistence`, builds one c
 
 ```ts cordis-catalog
 /**
+ * Re-index directory availability after the configured execution providers
+ * become reachable. Durable records, stored headers, and Session history are
+ * not rewritten; only the derived path indices are rebuilt.
+ * @returns after the queued re-index finished.
+ */
+async refreshExecutionDirectories(): Promise<void>
+
+/**
  * Create or reuse a workspace for an existing directory. The fully qualified
- * path is canonicalized through `fs.realpath`; a relative, nonexistent, or
- * non-directory path rejects. Repeated calls for the same canonical path
- * return the existing entity without changing its title.
- * A newly created workspace is prepended to the durable registry order.
+ * path is canonicalized through the configured execution bridge when the
+ * execution layer owns it, and through native `fs.realpath` otherwise; a
+ * relative, nonexistent, or non-directory path rejects. Repeated calls for
+ * the same canonical path return the existing entity without changing its
+ * title. A newly created workspace is prepended to the durable registry order.
  * Different canonical paths may share a display title.
  * @param path - Existing directory to own, in a fully qualified path spelling.
  * @param title - Display title used only when a new record is created.
@@ -581,7 +590,7 @@ unpinSession(sessionId: SessionId): Promise<void>
 
 /**
  * Resolve by canonical directory path without creating or mutating a
- * workspace. A missing path rejects during `realpath`; an existing unowned
+ * workspace. A missing path rejects during resolution; an existing unowned
  * directory returns `undefined`.
  * @param path - Existing directory path in a fully qualified spelling.
  * @returns the workspace owning the canonical path, when one exists.

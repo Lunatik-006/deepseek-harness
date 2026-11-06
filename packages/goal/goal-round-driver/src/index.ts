@@ -46,6 +46,16 @@ interface DriverState {
   stopping: boolean
 }
 
+/**
+ * The subset of the optional background-job registry a round wait observes.
+ *
+ * The registry belongs to its own package, so this driver names only the two
+ * fields it reads; a composition without the service keeps the round immediate.
+ */
+interface RunningJobRegistry {
+  list(caller?: string): readonly { readonly status: string }[]
+}
+
 /** Whether a source identifies an automatic, positive-numbered goal round. */
 function isGoalRoundSource(source: MessageSource): source is GoalMessageSource {
   return source.kind === 'goal' && source.round > 0
@@ -178,6 +188,22 @@ export function apply(ctx: Context): void {
     if (subagents !== undefined) {
       await Promise.race([subagents.waitForChildren(agent), unloading.promise])
       if (!readyAfterCheckpoint(state)) return
+    }
+    // A running background job is work the round must not race: a Session that
+    // ended its turn while `ship:check` runs would otherwise start its next
+    // goal round immediately and burn the round budget on the wait. The wait
+    // belongs here, not in a goal state change.
+    const jobs = ctx.get('jobs') as RunningJobRegistry | undefined
+    if (jobs !== undefined) {
+      for (;;) {
+        const running = jobs.list(agent.id)
+          .filter(job => job.status === 'running' || job.status === 'stopping')
+        if (running.length === 0) break
+        await Promise.race([new Promise<void>((resolve) => {
+          setTimeout(resolve, 2_000)
+        }), unloading.promise])
+        if (!readyAfterCheckpoint(state)) return
+      }
     }
     if (goal.roundsStarted >= goal.maxGoalRounds) {
       ctx.goals.block(agent, goalRef(goal), {

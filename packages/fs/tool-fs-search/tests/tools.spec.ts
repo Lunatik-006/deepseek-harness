@@ -160,7 +160,9 @@ class FakeHandle implements SubprocessHandle {
 class FakeSubprocess extends SubprocessRuntime {
   async terminalEnvironment() { return { platform: 'posix' as const } }
   spawns: SubprocessSpawnSpec[] = []
-  override async resolveExecutable(command: string): Promise<string> { return command }
+  /** Executable lookup the tools perform in this execution world; identity by default. */
+  resolve: (command: string) => string = command => command
+  override async resolveExecutable(command: string): Promise<string> { return this.resolve(command) }
   override spawnTerminal(): Promise<never> { throw new Error('search tools spawn pipes, never terminals') }
   handles: FakeHandle[] = []
   /** Arms the per-spawn script; a `{ reject }` return scripts a spawn-level failure. */
@@ -195,6 +197,8 @@ class FakeSpill extends SpillStore {
 interface SetupOptions {
   config?: Partial<ToolFsSearch.Config>
   spill?: boolean
+  /** Executable lookup the fake execution world performs; identity by default. */
+  resolveExecutable?: (command: string) => string
 }
 
 const DEFAULT_CONFIG = { sampleOverCapGlobResults: true } satisfies ToolFsSearch.Config
@@ -209,6 +213,7 @@ async function setup(options: SetupOptions = {}) {
   await ctx.plugin(NativeToolExecutor)
   await ctx.plugin(FakeSubprocess)
   const subprocess = ctx.subprocess as FakeSubprocess
+  if (options.resolveExecutable !== undefined) subprocess.resolve = options.resolveExecutable
   if (options.spill === true) await ctx.plugin(FakeSpill)
   const fiber = await ctx.plugin(ToolFsSearch, { ...DEFAULT_CONFIG, ...options.config })
   const spill = options.spill === true ? ctx.get('spillStore') as FakeSpill : undefined
@@ -436,6 +441,18 @@ describe('workdir derivation and signal forwarding', () => {
     const spec = subprocess.spawns[0]
     expect((spec?.stdio.stderr as { maxBytes: number }).maxBytes).toBe(64 * 1024)
     expect(spec?.graceMs).toBe(3_000)
+  })
+
+  it("resolves ripgrep in the session's execution world when the packaged binary is not visible there", async () => {
+    const { ctx, subprocess } = await setup({
+      resolveExecutable: (command) => {
+        if (command === 'rg') return '/mounted/world/bin/rg'
+        throw new Error(`not visible in this execution world: ${command}`)
+      },
+    })
+    subprocess.handler = () => runResult('a.ts\n')
+    await call(ctx, 'glob', { pattern: '*' })
+    expect(subprocess.spawns[0]?.argv.slice(0, 2)).toEqual(['/mounted/world/bin/rg', '--no-config'])
   })
 
   it('forwards exec.signal into the spawn spec', async () => {

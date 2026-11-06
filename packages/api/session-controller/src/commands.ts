@@ -144,9 +144,14 @@ export class SessionCommandController {
   /**
    * Validate and record one Session model selection; save the default in the background.
    * @param request - Session identity and requested model selection.
+   * @param options - whether this call also persists the Host default; direct callers retain it.
    * @returns the normalized selection recorded for the Session, without waiting for default persistence.
    */
-  async selectModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue> {
+  async selectModel(
+    request: SessionSelectModelRequest,
+    options: { readonly persistDefault?: boolean } = {},
+  ): Promise<SessionSelectModelValue> {
+    const persistDefault = options.persistDefault ?? true
     const agent = await this.resolveAgent(request.sessionId)
     return this.agents.serializeImageAdmission(agent, async () => {
       try {
@@ -160,11 +165,13 @@ export class SessionCommandController {
         }
         await this.ctx.llm.resolveCallConfig(selected)
         agent.model.select(selected)
-        void this.ctx.agentDefaultModel.saveSelection(selected).catch((error: unknown) => {
-          this.ctx.logger.warn(
-            `session-controller: model selection changed for the Session but the default was not saved: ${String(error)}`,
-          )
-        })
+        if (persistDefault) {
+          void this.ctx.agentDefaultModel.saveSelection(selected).catch((error: unknown) => {
+            this.ctx.logger.warn(
+              `session-controller: model selection changed for the Session but the default was not saved: ${String(error)}`,
+            )
+          })
+        }
         return { selected: { ...selected } }
       } catch (error) {
         if (remoteErrorOf(error) !== undefined) throw error

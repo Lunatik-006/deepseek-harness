@@ -221,6 +221,7 @@ export const SERVICE_WALK_EXEMPTIONS: Record<string, string> = {
   sidebarRight: 'client-side right-Sidebar navigation face — packages/client/ui-sidebar-right/README.md owns the API',
   sidebarRightTabs: 'client-side right-Sidebar tab-type registry — packages/client/ui-sidebar-right/README.md owns the API',
   documentPreviews: 'client-side document renderer registry — docs/subsystems/sidebar-right.md owns the API',
+  platformExecution: 'optional deployment-provided directory bridge (ExecutionWorkspaceDirectoryBridge | undefined); the platform execution service installs it — packages/workspace/workspace/execution-directories.md owns the contract',
 }
 
 /**
