@@ -722,7 +722,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
     // Settlement and Client replacement may race the result request. Results
     // from a completed event or a superseded delivery are idempotent no-ops.
     if (pending === undefined || !pending.deliveries.has(client)) return
-    if (!this.canAnswerInteraction(client.principal, pending.source.context.agentId)) throw new RemoteError('remote-access/denied', 'interaction permission revoked', {})
+    if (!this.canAnswerInteraction(client.principal, pending.source.context.agentId)) throw new RemoteError('remote-access/denied', 'interaction permission revoked', { action: REMOTE_EVENT_RESULT_ENDPOINT, reason: 'policy-failed' })
     this.removeRemoteEventDelivery(pending, client)
     if (result.outcome.kind === 'result') {
       this.settleRemoteEvent(pending, {
