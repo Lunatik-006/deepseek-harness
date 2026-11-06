@@ -123,6 +123,20 @@ Host `ctx.connection` members consumed by transport-independent adapters.
 
 ```ts cordis-catalog
 /**
+ * Register the deployment's sole authenticated browser admission provider.
+ * @param provider - the installation's carrier-admission policy.
+ * @returns disposer withdrawing the provider.
+ */
+registerBrowserAdmission(provider: ConnectionBrowserAdmission): () => void
+
+/**
+ * Resolve per-request globals after authenticating the actual carrier request.
+ * @param request - the candidate index carrier.
+ * @returns the admitted actor's boot globals, or undefined when no admission is required.
+ */
+indexInjections(request: ConnectionTrustRequest): Promise<readonly NativeDesktopBootInjection[] | undefined>
+
+/**
  * Compose exact Fetch routes and the shared-channel RPC interceptor.
  * @param channel - shared channel mounted by Connection.
  * @returns Fetch handler for trusted, authenticated requests.
@@ -149,7 +163,7 @@ admit(request: ConnectionTrustRequest): PeerAdmission
  * @param options - fixed principal and optional interaction participation (default `answer`).
  * @returns a new Peer distinct from every other Peer.
  */
-createPeer(options: { readonly principal: Principal; readonly interactions?: 'answer' | 'none' }): PeerScope
+createPeer(options: { readonly principal: Principal; readonly actorPrincipal?: Principal; readonly interactions?: 'answer' | 'none' }): PeerScope
 
 /**
  * Claim a physical socket for an API Peer; browser sockets share their owner Peer.
@@ -157,6 +171,7 @@ createPeer(options: { readonly principal: Principal; readonly interactions?: 'an
  * @returns the Peer and idempotent release, or 409 for duplicate API ownership.
  * The carrier releases on socket termination or failed upgrade; release removes
  * API admission synchronously without cancelling independent HTTP calls.
+ * Provider-owned shared browser records retain their existing Peer lifetime.
  */
 admitConnection(request: ConnectionTrustRequest): ConnectionAdmission
 
@@ -212,6 +227,13 @@ The browser HTTP carrier service. Activation loads any configured TLS material, 
  * @throws before `listen` binds a port, or when the bind address has no URL form.
  */
 getOrigin(): string
+
+/**
+ * Register one policy before raw HTTP route/fallback dispatch.
+ * @param policy - the composing application's authorization of the actual request.
+ * @returns disposer; a withdrawn policy leaves HTTP closed until re-registered.
+ */
+registerHttpPolicy(policy: (request: IncomingMessage) => boolean | Promise<boolean>): () => void
 
 /**
  * Register a named route. Duplicate (kind, path) throws — route patterns are

@@ -661,8 +661,8 @@ Resolve strict generated definitions or conservative SRC markers against current
 
 ```ts cordis-catalog
 /**
- * Check for an active owner Client event stream, the only kind that can answer forwarded waterfalls.
- * @returns whether an owner stream is open and has not been cancelled.
+ * Check for an active interaction-participating Client event stream.
+ * @returns whether an eligible stream is open; each delivery still checks its session permission.
  */
 hasLiveClient(): boolean
 
@@ -694,7 +694,34 @@ async invoke(request: InvokeRemoteRequest): Promise<unknown>
  * @returns a cancellation-aware iterable over the business results.
  */
 async stream(request: InvokeRemoteRequest): Promise<AsyncIterable<unknown>>
+
+/**
+ * Install one session-scoped answer policy; the registration owns its disposal.
+ * @param policy - whether a principal may answer an interaction for one agent.
+ * @returns disposer withdrawing the policy.
+ */
+registerInteractionPolicy(policy: (principal: Principal, agentId: string) => boolean): () => void
 ```
 
 Source: [`packages/api/gateway/src/index.ts`](../../packages/api/gateway/src/index.ts)
+
+<a id="remote-access-events"></a>
+
+### `remote-access/*` events
+
+<a id="remote-accessinvalidated--emit"></a>
+
+#### `remote-access/invalidated` — emit
+
+Bindings or condition answers may have changed for every principal.
+
+```ts cordis-catalog
+/**
+ * Bindings or condition answers may have changed for every principal.
+ * @mode emit
+ */
+'remote-access/invalidated'(): void
+```
+
+Source: [`packages/api/remote-access/src/index.ts`](../../packages/api/remote-access/src/index.ts)
 <!-- END GENERATED cordis-surface -->

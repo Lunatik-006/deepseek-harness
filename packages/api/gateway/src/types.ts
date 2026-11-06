@@ -4,7 +4,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { PeerScope, RemoteUplinkWindow, TypertResourceReader } from '@deepseek-ai/dsh-typert-protocol'
+import type { PeerScope, Principal, RemoteUplinkWindow, TypertResourceReader } from '@deepseek-ai/dsh-typert-protocol'
 import type { RemoteEventAgentId, RemoteEventHostInfo } from './stream-protocol.ts'
 
 /** One Remote method request after a carrier has decoded its envelope. */
@@ -152,12 +152,14 @@ export interface PendingRemoteEventInfo {
 
 /** Host dispatcher consumed by Connection adapters. */
 export interface TypertGateway {
+  /** Register the installation's sole session-scoped interaction permission check. */
+  registerInteractionPolicy(policy: (principal: Principal, agentId: TypertRemoteEventContext['agentId']) => boolean): () => void
   /** Carrier adapter shared by WebSocket and in-process transports. */
   readonly wireStream: TypertGatewayWireStream
 
   /**
-   * Check for an active owner Client event stream, the only kind that can answer forwarded waterfalls.
-   * @returns whether an owner stream is open and has not been cancelled.
+   * Check for an active interaction-participating Client event stream.
+   * @returns whether an eligible stream is open; each delivery still checks its session permission.
    */
   hasLiveClient(): boolean
 

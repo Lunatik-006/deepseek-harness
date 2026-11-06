@@ -6,6 +6,8 @@ import { CONNECT_PATH, type ConnectionInteractions } from './connect-protocol.ts
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
 import type { CredentialProvider, CredentialRecord } from '@deepseek-ai/dsh-credentials'
 import type {
+  NativeApiCredentialSeed,
+  NativeActorApiCredential,
   ConnectionIndexRequest,
   ConnectionIndexResponse,
   ConnectionTrustRequest,
@@ -315,7 +317,7 @@ export class BrowserAuth {
     req: ConnectionIndexRequest,
     res: ConnectionIndexResponse,
     secure: boolean,
-    publish: (interactions: ConnectionInteractions) => PeerId,
+    publish: (interactions: ConnectionInteractions, credential: NativeApiCredentialSeed) => PeerId,
   ): void {
     const url = new URL(req.url ?? '/', 'http://dsh.invalid')
     const declarations = url.searchParams.getAll('interactions')
@@ -334,7 +336,7 @@ export class BrowserAuth {
     }
     const issuedAt = Date.now()
     const expiresAt = issuedAt + this.maxAgeMilliseconds
-    const id = publish(interactions)
+    const id = publish(interactions, { authority, expiresAt })
     const value = encodeCookie({ version: 2, authority, id, issuedAt, expiresAt }, this.secret)
     res.writeHead(302, {
       'cache-control': 'no-store',
@@ -348,10 +350,51 @@ export class BrowserAuth {
   }
 
   /**
-   * Verify the authority-bound browser cookie on a Host request.
+   * Return the verified native cookie facts without exposing its signing secret.
    * @param request - request headers carrying Host and Cookie.
-   * @param secure - whether the receiving listener uses TLS, including its default port.
-   * @returns true only for an unexpired cookie signed by this activation's loaded secret.
+   * @param secure - whether the receiving listener uses TLS.
+   * @returns the signed cookie payload, or undefined when the cookie is absent, invalid, or expired.
+   */
+  desktopOwnerCredential(request: ConnectionTrustRequest, secure = false): CookiePayload | undefined {
+    return this.authenticate(request, secure)
+  }
+
+  /**
+   * Verify and return an existing version-2 credential without reviving its Peer.
+   * @param request - request headers carrying Host and Cookie.
+   * @param secure - whether the receiving listener uses TLS.
+   * @returns the signed payload with its cookie header, or undefined for a non-version-2 or invalid credential.
+   */
+  registeredActorCredential(request: ConnectionTrustRequest, secure = false): (ApiCookiePayload & { readonly cookie: string }) | undefined {
+    const credential = this.authenticate(request, secure)
+    if (credential?.version !== 2) return undefined
+    const name = cookieName(credential.authority)
+    const value = cookieValue(header(request.headers, 'cookie') ?? '', name)
+    return value ? { ...credential, cookie: name + '=' + value } : undefined
+  }
+
+  /**
+   * Issue the existing version-2 cookie for a provider-validated live Peer.
+   * @param authority - authority the cookie is audience-bound to.
+   * @param id - live API Peer identity the cookie publishes.
+   * @param secure - whether the receiving listener uses TLS.
+   * @returns the cookie header, set-cookie value, and absolute expiry.
+   */
+  issueActorApiCredential(authority: string, id: PeerId, secure = false): NativeActorApiCredential {
+    const audience = requestAudience({ host: authority }, secure)
+    if (!audience) throw new Error('Native API cookie authority is invalid')
+    const issuedAt = Date.now(), expiresAt = issuedAt + this.maxAgeMilliseconds
+    const value = encodeCookie({ version: 2, authority: audience, id, issuedAt, expiresAt }, this.secret)
+    const name = cookieName(audience)
+    return { cookie: name + '=' + value, expiresAt,
+      setCookie: sessionCookie(name, value, expiresAt, Math.floor(this.maxAgeMilliseconds / 1000), secure) }
+  }
+
+  /**
+   * Whether the request carries a valid browser authentication cookie.
+   * @param request - request headers carrying Host and Cookie.
+   * @param secure - whether the receiving listener uses TLS.
+   * @returns whether a live, unexpired browser cookie authenticates the request.
    */
   isAuthenticated(request: ConnectionTrustRequest, secure = false): boolean {
     return this.authenticate(request, secure)?.version === COOKIE_PAYLOAD_VERSION

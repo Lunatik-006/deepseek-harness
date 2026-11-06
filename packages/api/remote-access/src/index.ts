@@ -38,6 +38,13 @@ declare module '@deepseek-ai/cordis' {
     /** Host method-level access control for non-owner Peers. */
     remoteAccess: RemoteAccessService
   }
+  interface Events {
+    /**
+     * Bindings or condition answers may have changed for every principal.
+     * @mode emit
+     */
+    'remote-access/invalidated'(): void
+  }
 }
 
 /** The snapshot endpoint every Peer may read for itself. */
@@ -178,6 +185,7 @@ export class RemoteAccessService extends TypertRemoteService {
     for (const follower of this.followers) {
       if (key === undefined || canonicalJson(follower.principal) === key) follower.touch()
     }
+    this.ctx.emit('remote-access/invalidated')
   }
 
   /**

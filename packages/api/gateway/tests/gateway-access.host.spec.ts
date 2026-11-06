@@ -714,7 +714,7 @@ describe('Gateway forwarded events for non-owner Peers', () => {
     expect(ctx.typertGateway.hasLiveClient()).toBe(false)
   })
 
-  it('delivers only allowed broadcasts and no answerable waterfall to a non-owner, and refuses its results', async () => {
+  it('delivers only allowed broadcasts and no answerable waterfall to a non-owner, and ignores its results', async () => {
     const { ctx, hold } = await setup({ connection: true })
     hold(shelf('s1'))
     const decide = vi.spyOn(RemoteAccessService.prototype, 'decide')
@@ -773,9 +773,9 @@ describe('Gateway forwarded events for non-owner Peers', () => {
         payload: { args: { clientId, eventId: 'any', outcome: { kind: 'next' } } },
       }),
     }), guest)
-    expect(await refused.json()).toMatchObject({
-      result: { ok: false, error: { code: 'gateway/invocation-unavailable', details: { endpoint: '$events/result' } } },
-    })
+    // The guest was never a delivery of an answerable event: the result settles
+    // nothing and is an idempotent no-op rather than a second authority check.
+    expect(await refused.json()).toMatchObject({ result: { ok: true } })
     abort.abort()
     await guestEvents.return?.()
     await ownerEvents.return?.()

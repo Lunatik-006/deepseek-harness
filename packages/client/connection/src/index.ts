@@ -15,6 +15,16 @@ import { HostConnectionService } from './rpc-host.ts'
 import { ConnectionRecoveryConfigSchema, resolveConnectionConfig, type ConnectionRecoveryConfig } from './recovery-config.ts'
 
 export type {
+  ConnectionBrowserAdmission,
+  NativeLoopbackSocketFacts,
+  NativeDesktopTrustRequest,
+  NativeApiCredentialSeed,
+  NativeDesktopBootInjection,
+  NativeActorApiCredential,
+  NativeRegisteredActorCredential,
+  NativeDesktopOwnerProof,
+  NativeDesktopLocalOwnerProvider,
+  NativeDesktopLocalAdmission,
   PeerAdmission,
   ConnectionAdmission,
   ConnectionFetchMethod,
@@ -162,6 +172,14 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
       kind: 'exact', path: CONNECT_PATH,
       handler: (req, res) => { connection.authorizeConnect(req, res) },
     }), 'client-connection: /connect route')
+    webCtx.effect(() => webCtx.webServer.register({
+      kind: 'exact', path: '/desktop/bootstrap',
+      handler: async (req, res) => {
+        const value = req.method === 'GET' ? await connection.desktopBootstrap(req) : undefined
+        res.writeHead(value ? 200 : 403, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+        res.end(JSON.stringify(value ?? { error: 'native Desktop actor bootstrap required' }))
+      },
+    }), 'client-connection: native Desktop bootstrap')
   })
   ctx.inject(['attachments'], (attachmentCtx) => {
     assertImageBodyCapacity(attachmentCtx, maxRequestBodyBytes)

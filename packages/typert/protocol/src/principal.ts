@@ -15,3 +15,12 @@ export function principalOf(invocation: RemoteInvocation | undefined): Principal
   const principal = invocation?.peer.principal
   return principal?.kind === 'owner' ? undefined : principal
 }
+
+/**
+ * Read durable authorship without changing native owner authorization.
+ * @param invocation - `ctx.invocation`; `undefined` outside a Remote call.
+ * @returns the issued author when present, else the non-owner caller, else `undefined`.
+ */
+export function actorPrincipalOf(invocation: RemoteInvocation | undefined): Principal | undefined {
+  return invocation?.peer.actorPrincipal ?? principalOf(invocation)
+}

@@ -14,6 +14,7 @@ import type { PeerId, PeerScope, Principal } from '@deepseek-ai/dsh-typert-proto
 export interface PeerOptions {
   /** Caller identity every call through this Peer speaks for. */
   readonly principal: Principal
+  readonly actorPrincipal?: Principal
   /** Omission permits an event stream; non-owner Peers still cannot answer waterfalls. */
   readonly interactions?: 'answer' | 'none'
 }
@@ -27,6 +28,7 @@ export class Peer implements PeerScope {
   readonly id: PeerId = randomUUID() as PeerId
   readonly ctx: Context
   readonly principal: Principal
+  readonly actorPrincipal?: Principal
   readonly interactions: 'answer' | 'none'
   readonly signal: AbortSignal
   private readonly scope: Scope
@@ -37,6 +39,9 @@ export class Peer implements PeerScope {
    */
   constructor(owner: Context, options: PeerOptions) {
     this.principal = options.principal
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- other packages merge non-owner kinds into PrincipalMap.
+    if (options.actorPrincipal !== undefined && (options.principal.kind !== 'owner' || options.actorPrincipal.kind === 'owner')) throw new Error('Actor requires native owner authority and a named non-owner identity')
+    Object.defineProperty(this, 'actorPrincipal', { value: options.actorPrincipal === undefined ? undefined : Object.freeze({ ...options.actorPrincipal }), enumerable: true, writable: false, configurable: false })
     this.interactions = options.interactions ?? 'answer'
     this.scope = createScope(owner, this)
     this.ctx = this.scope.ctx
