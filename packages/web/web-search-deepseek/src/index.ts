@@ -63,6 +63,14 @@ export interface Config {
   maxTokens: Volatile<number>
   /** Maximum `web_search` server-tool uses per request. Defaults to 5. */
   maxUses: Volatile<number>
+  /**
+   * Authenticate searches with the signed-in DeepSeek account token even when
+   * the model request went through another provider route. Defaults to false,
+   * which keeps the account token exclusive to the `deepseek-account` route.
+   * An installation that wants search on a free/third-party chat route turns
+   * this on explicitly; the search still runs on the account's search endpoint.
+   */
+  accountFallback: Volatile<boolean>
 }
 
 export const Config = z.object({
@@ -76,6 +84,7 @@ export const Config = z.object({
   apiVersion: z.string().default(DEEPSEEK_DEFAULT_API_VERSION).volatile(),
   maxTokens: z.number().step(1).min(1).default(DEEPSEEK_DEFAULT_MAX_TOKENS).volatile(),
   maxUses: z.number().step(1).min(1).default(DEEPSEEK_DEFAULT_MAX_USES).volatile(),
+  accountFallback: z.boolean().default(false).volatile(),
 })
 
 /**
@@ -91,7 +100,7 @@ const ACCOUNT_PROVIDER = 'deepseek-account'
 export const WEB_SEARCH_DEEPSEEK_SETTINGS_NAMESPACE = 'web-search-deepseek'
 
 /** Options for one search, with the key reference the readiness check reads. */
-type SearchOptions = DeepSeekSearchProviderOptions & { readonly apiKeyEnv: CredentialRef }
+type SearchOptions = DeepSeekSearchProviderOptions & { readonly apiKeyEnv: CredentialRef; readonly accountFallback: boolean }
 
 /**
  * Project one resolved section into the options the provider serves its next
@@ -112,9 +121,12 @@ function resolveOptions(
     ...literalApiKey === undefined ? {} : { apiKey: literalApiKey },
     resolveAccountToken: async (endpoint) => {
       // The latest request context names the route that served the model
-      // request which called this search, as account sign-out reads it.
+      // request which called this search, as account sign-out reads it. The
+      // explicit fallback lets a free/third-party chat route use the signed-in
+      // account's search credential; the default keeps the account token
+      // exclusive to the account route.
       const provider = ctx.get('agents')?.currentInitiator()?.session.requestContext()?.provider
-      if (provider !== ACCOUNT_PROVIDER) return undefined
+      if (!config.accountFallback && provider !== ACCOUNT_PROVIDER) return undefined
       return await ctx.get('deepseekAccount')?.resolveToken(endpoint)
     },
     resolveApiKey: async () => {
@@ -125,6 +137,7 @@ function resolveOptions(
       return ambient !== undefined && ambient.value.length > 0 ? ambient.value : undefined
     },
     apiKeyEnv,
+    accountFallback: config.accountFallback,
     baseURL: config.baseURL
       ?? launchEnvironmentOf(ctx).get(SEARCH_BASE_URL_ENV)?.value
       ?? DEEPSEEK_DEFAULT_BASE_URL,
@@ -156,7 +169,7 @@ async function searchConfigured(
   ctx: Context, options: SearchOptions, route: string | undefined,
 ): Promise<boolean> {
   const account = ctx.get('deepseekAccount')
-  if (route === ACCOUNT_PROVIDER && account !== undefined) {
+  if ((options.accountFallback || route === ACCOUNT_PROVIDER) && account !== undefined) {
     let token: string | undefined
     try { token = await account.resolveToken(`${options.baseURL}/messages`) }
     catch (_unreadableGrant) { return false /* The search fails on this read before it tries the API key. */ }
@@ -180,6 +193,7 @@ export function apply(ctx: Context, config: Config): void {
   const options = () => resolveOptions(ctx, {
     apiKey: config.apiKey.get(), apiKeyEnv: config.apiKeyEnv.get(), baseURL: config.baseURL.get(), model: config.model.get(),
     apiVersion: config.apiVersion.get(), maxTokens: config.maxTokens.get(), maxUses: config.maxUses.get(),
+    accountFallback: config.accountFallback.get(),
   })
   const provider = new DeepSeekSearchProvider(options)
   ctx.web.registerSearchProvider({
