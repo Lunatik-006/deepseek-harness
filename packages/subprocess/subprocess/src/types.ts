@@ -104,6 +104,15 @@ export interface SubprocessSpawnSpec {
    * tombstone that removes an ordinary ambient entry from the child.
    */
   env?: NodeJS.ProcessEnv | undefined
+  /**
+   * Whether Windows creates the child without a console window. Defaults to
+   * `true` (hidden). A child spawned under a restricted or write-restricted
+   * token cannot initialize DLLs when the console is isolated with
+   * `CREATE_NO_WINDOW` (`STATUS_DLL_INIT_FAILED`, `0xC0000142`); such a caller
+   * sets this to `false` so the child shares the host console. Pipe-based
+   * stdio keeps its output private either way.
+   */
+  windowsHide?: boolean | undefined
 }
 
 /**

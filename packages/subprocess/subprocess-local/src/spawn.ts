@@ -469,7 +469,9 @@ export function spawnSubprocess(spec: SubprocessSpawnSpec, internals: SpawnInter
     env: controlEnvironment(childEnv(spec.env), spec.stdio.control),
     stdio,
     detached: platform !== 'win32',
-    windowsHide: platform === 'win32',
+    // A restricted-token child dies during DLL initialization when its console
+    // is isolated; callers that spawn one ask to share the host console.
+    windowsHide: spec.windowsHide ?? (platform === 'win32'),
   })
   const direct = directChildResult(child)
   const pid = child.pid
