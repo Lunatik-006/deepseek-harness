@@ -5,7 +5,7 @@ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
 
 import { access, readFile, writeFile } from 'node:fs/promises'
-import { readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -1502,6 +1502,18 @@ async function main(): Promise<void> {
   }
   publishUpdate(updateState)
 }
+
+// A local build runs beside an installed release. Its appId names its own userData, so Electron's
+// single-instance lock and window-state do not belong to the installed app on the same machine.
+try {
+  const manifest = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8')) as { dshDesktopAppId?: unknown }
+  const appId = manifest.dshDesktopAppId
+  if (typeof appId === 'string' && appId.endsWith('-local')) {
+    const localUserData = join(app.getPath('appData'), 'DeepSeek Harness Local')
+    mkdirSync(localUserData, { recursive: true })
+    app.setPath('userData', localUserData)
+  }
+} catch { /* a checkout without the packaged manifest keeps the default */ }
 
 const ownsDesktopInstance = claimDesktopSingleInstance(app, () => { focusPrimaryWindow() })
 

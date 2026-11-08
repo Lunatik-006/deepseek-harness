@@ -11,16 +11,18 @@ import { releaseFamily } from '../../../scripts/release/families.ts'
 import { packFamilyMembers, parsePackConcurrency } from '../../../scripts/release/pack.ts'
 
 async function main(): Promise<void> {
-  const { values } = parseArgs({
+  const { values, positionals } = parseArgs({
     options: { out: { type: 'string' }, concurrency: { type: 'string' } },
-    allowPositionals: false,
+    allowPositionals: true,
   })
-  if (values.out === undefined) throw new Error('desktop local pack: --out must name the package staging directory')
+  // pnpm exec forwards a flag it does not know as a positional, so accept both forms.
+  const out = values.out ?? positionals[0]
+  if (out === undefined) throw new Error('desktop local pack: --out must name the package staging directory')
   const concurrency = parsePackConcurrency(values.concurrency)
   const root = process.cwd()
   const environment = resolveClientBuildEnvironment(repositoryClientBuildEnvironment(root), 'local')
   readClientBuildRecord(root, environment)
-  const destination = resolve(root, values.out)
+  const destination = resolve(root, out)
   const packed = await packFamilyMembers(root, releaseFamily('dsh'), destination, concurrency)
   console.log(`desktop local pack: ${String(packed.length)} tarball(s) in ${destination}`)
 }

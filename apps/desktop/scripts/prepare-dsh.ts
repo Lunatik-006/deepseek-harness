@@ -4,7 +4,7 @@ import { resolveMacOSSignatureCacheDirectory } from './macos-signature-cache-dir
 import { packagingStep } from './packaging-step.mjs'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join, relative, resolve } from 'node:path'
 import { desktopNodeEnvironment } from '../src/node-environment.ts'
@@ -114,7 +114,29 @@ function runPnpm(args: readonly string[]): Promise<void> {
   })
 }
 
+function runtimeInputFingerprint(): string {
+  const hash = createHash('sha256')
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) walk(full)
+      // The packed tarball bytes carry their own timestamps, so only the set membership is a stable key.
+      else hash.update(relative(PACKAGE_SET_ROOT, full)).update('\u0000')
+    }
+  }
+  walk(PACKAGE_SET_ROOT)
+  return hash.digest('hex')
+}
+
 async function main(): Promise<void> {
+  // The packed package set is a pure function of its inputs; an unchanged set reuses the runtime.
+  const inputFingerprint = runtimeInputFingerprint()
+  const stampPath = join(RUNTIME_ROOT, 'runtime-inputs.sha256')
+  if (existsSync(join(DSH_OUTPUT_ROOT, 'node_modules')) && existsSync(stampPath)
+    && readFileSync(stampPath, 'utf8').trim() === inputFingerprint) {
+    console.log('desktop runtime: reused (inputs unchanged)')
+    return
+  }
   try {
     console.log(`desktop runtime: pnpm store ${STORE_ROOT}`)
     await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:reset', async () => {
@@ -129,7 +151,7 @@ async function main(): Promise<void> {
       createRuntimeProjectMetadata(BUILD_ROOT, release)
       return prepareRuntimePatches(BUILD_ROOT, resolve(APP_ROOT, '..', '..'))
     })
-    await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:lockfile', () => runPnpm(['install', '--lockfile-only']))
+    await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:lockfile', () => runPnpm(['install', '--lockfile-only', '--config.node-linker=hoisted']))
     verifyRuntimePatches(BUILD_ROOT, patches)
     const lockfile = readFileSync(join(BUILD_ROOT, 'pnpm-lock.yaml'), 'utf8')
     console.log(`desktop runtime: lockfile sha256 ${createHash('sha256').update(lockfile).digest('hex')}`)
@@ -137,7 +159,7 @@ async function main(): Promise<void> {
       lockfile,
       readDesktopCorePackageSet(BUILD_ROOT, release.version),
     )
-    await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:install', () => runPnpm(['install', '--prod', '--frozen-lockfile', '--trust-lockfile']))
+    await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:install', () => runPnpm(['install', '--prod', '--frozen-lockfile', '--trust-lockfile', '--config.node-linker=hoisted']))
     const packageSet = readDesktopCorePackageSet(BUILD_ROOT, release.version)
     const targetName = resolveDesktopBuildTarget()
     const target = desktopTargetPlatform(targetName)
@@ -175,6 +197,8 @@ async function main(): Promise<void> {
       return writeRuntime(DSH_OUTPUT_ROOT, release, packageSet.packages.map(entry => entry.name), target)
     })
     const descriptor = await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:verify-before-smoke', () => verifyDesktopRuntime(DSH_OUTPUT_ROOT, release.version, target))
+    mkdirSync(RUNTIME_ROOT, { recursive: true })
+    writeFileSync(stampPath, `${inputFingerprint}\n`)
     if (!process.argv.includes('--defer-runtime-smoke')) {
       await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:smoke', () => smokePreparedRuntime(DSH_OUTPUT_ROOT, NODE, RUNTIME_ROOT, descriptor))
       await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:verify-after-smoke', () => verifyDesktopRuntime(DSH_OUTPUT_ROOT, release.version, target))

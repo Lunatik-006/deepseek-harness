@@ -50,8 +50,10 @@ export interface BuildArguments {
  *   or `--profile` accompanies `--scope check` or `--scope typecheck`.
  */
 export function parseBuildArguments(args: readonly string[]): BuildArguments {
+  // A package runner may insert the option terminator; strip it so the caller's flags still parse.
+  const forwarded = args[0] === '--' ? args.slice(1) : args
   const { values } = parseArgs({
-    args: [...args],
+    args: [...forwarded],
     options: {
       profile: { type: 'string' },
       scope: { type: 'string' },
