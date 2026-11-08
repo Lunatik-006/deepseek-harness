@@ -125,6 +125,9 @@ export function createElectronBuilderConfig(
     electronFuses: { runAsNode: true },
     beforeBuild: async () => {
       if (resolvedPlatform !== 'win32') return true
+      // An unpacked directory has no installer, so its UI (and the C++ toolchain that compiles it)
+      // is not part of a --dir build.
+      if (process.argv.includes('--dir')) return true
       await promisify(execFile)('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
         fileURLToPath(new URL('./prepare-windows-installer.ps1', import.meta.url)),
         '-OutputDirectory', join(buildPaths.root, 'installer-ui')], {
@@ -181,7 +184,7 @@ export function createElectronBuilderConfig(
       target: unsigned ? ['dmg'] : ['dmg', 'zip'],
     },
     dmg: {
-      format: 'ULMO',
+      format: 'ULFO',
       sign: !unsigned,
       writeUpdateInfo: false,
     },
