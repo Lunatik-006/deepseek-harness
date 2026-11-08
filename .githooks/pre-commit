@@ -1,0 +1,4 @@
+#!/bin/sh
+# Git runs hooks with its own sh, which shares the console; the node runner keeps spawned
+# children on that console instead of hiding it (the lefthook 0xC0000142 class).
+exec node "$(git rev-parse --show-toplevel)/scripts/precommit.mjs"
