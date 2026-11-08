@@ -732,11 +732,13 @@ describe('web-search-deepseek account route selection', () => {
     expect(headers).not.toHaveProperty('x-api-key')
   })
 
-  it.each(['deepseek-official', undefined])('keeps API-key authentication for route %j', async (provider) => {
+  it.each(['deepseek-official', undefined])('uses the signed-in account on route %j by default', async (provider) => {
     const { headers, asked } = await searchAs(provider)
-    expect(asked).toEqual([])
-    expect(headers['x-api-key']).toBe('ds-key')
-    expect(headers).not.toHaveProperty('x-dsh-auth-token')
+    // Search must exist for every selected model: the default asks the account instead of requiring
+    // the chat's model request to have gone through the account route.
+    expect(asked.length).toBeGreaterThan(0)
+    expect(headers['x-dsh-auth-token']).toBe('account-token')
+    expect(headers).not.toHaveProperty('x-api-key')
   })
 })
 
@@ -828,12 +830,13 @@ describe('web-search-deepseek search readiness', () => {
     expect(asked).toEqual(['https://api.deepseek.com/anthropic/v1/messages'])
   })
 
-  it('asks the account only for the account route', async () => {
+  it('asks the account for a non-account route by default', async () => {
     const asked: string[] = []
     const ctx = await compose({ account: officialOriginAccount(asked) })
-    expect(await ctx.web.searchReady('deepseek-official')).toBe(false)
-    expect(await ctx.web.searchReady(undefined)).toBe(false)
-    expect(asked).toEqual([])
+    // The fallback is the product default: the tool must exist on a free/third-party model too.
+    expect(await ctx.web.searchReady('deepseek-official')).toBe(true)
+    expect(await ctx.web.searchReady(undefined)).toBe(true)
+    expect(asked.length).toBeGreaterThan(0)
   })
 
   it.each<[string, Setup]>([
