@@ -1,4 +1,5 @@
 import { installFileActions } from './file-actions.ts'
+import { parseWindowState, restoredBounds, type WindowBounds, type WindowState } from './window-state.ts'
 import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/types'
 import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
@@ -259,15 +260,6 @@ function platformLoginUrl(authorizeUrl: string): string {
   return url.href
 }
 
-/** Persisted main-window geometry; a convenience record, never startup policy. */
-interface WindowState {
-  x: number
-  y: number
-  width: number
-  height: number
-  maximized: boolean
-}
-
 const WINDOW_STATE_FILE = 'window-state.json'
 let windowStateOwner: BrowserWindow | undefined
 
@@ -277,49 +269,15 @@ function windowStatePath(): string {
 
 function readWindowState(): WindowState | undefined {
   try {
-    const state = JSON.parse(readFileSync(windowStatePath(), 'utf8')) as Record<string, unknown> | null
-    if (state === null || typeof state !== 'object') return undefined
-    const x = Number(state['x'])
-    const y = Number(state['y'])
-    const width = Number(state['width'])
-    const height = Number(state['height'])
-    if (![x, y, width, height].every(Number.isFinite)) return undefined
-    if (width < 520 || height < 600) return undefined
-    return {
-      x: Math.round(x),
-      y: Math.round(y),
-      width: Math.round(width),
-      height: Math.round(height),
-      maximized: state['maximized'] === true,
-    }
+    return parseWindowState(JSON.parse(readFileSync(windowStatePath(), 'utf8')))
   } catch {
     return undefined
   }
 }
 
-function visibleOnDisplay(rect: { x: number; y: number; width: number; height: number }): boolean {
-  return screen.getAllDisplays().some((display) => {
-    const area = display.workArea
-    const width = Math.min(rect.x + rect.width, area.x + area.width) - Math.max(rect.x, area.x)
-    const height = Math.min(rect.y + rect.height, area.y + area.height) - Math.max(rect.y, area.y)
-    return width >= 160 && height >= 120
-  })
+function restoredWindowBounds(state: WindowState | undefined): WindowBounds | undefined {
+  return restoredBounds(state, screen.getAllDisplays().map(display => display.workArea), screen.getPrimaryDisplay().workArea)
 }
-
-function restoredWindowBounds(state: WindowState | undefined): { x: number; y: number; width: number; height: number } | undefined {
-  if (state === undefined) return undefined
-  if (visibleOnDisplay(state)) return { x: state.x, y: state.y, width: state.width, height: state.height }
-  const area = screen.getPrimaryDisplay().workArea
-  const width = Math.min(state.width, area.width)
-  const height = Math.min(state.height, area.height)
-  return {
-    x: area.x + Math.round((area.width - width) / 2),
-    y: area.y + Math.round((area.height - height) / 2),
-    width,
-    height,
-  }
-}
-
 function persistWindowState(): void {
   const window = windowStateOwner
   if (window === undefined || window.isDestroyed() || window.isMinimized()) return
@@ -378,7 +336,7 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
       preload,
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
+      sandbox: false,
       webSecurity: true,
       webviewTag: primary,
       devTools: true,
@@ -884,6 +842,9 @@ async function main(): Promise<void> {
     assertDesktopSender(event, ['app'])
     await startup
     if (backend.host === undefined || hostUrl === undefined) throw new Error('Desktop Host is unavailable')
+    // The renderer has booted. A startup that raced Host readiness returned before it could
+    // reveal the primary window, so finish that step now instead of leaving it hidden.
+    void openInitialWindow().catch((error: unknown) => { reportFatal(error, 'main') })
     return { injections, streamBaseUrl: new URL(hostUrl).origin }
   })
 

@@ -1086,7 +1086,7 @@ describe('exit_plan_mode', () => {
     expect(question?.options?.map(option => option.label)).toContain(question?.intent?.approve)
   })
 
-  it('reads a dismissed review as the user taking the turn back: a turn-concluding success, not a failure', async () => {
+  it('reads a dismissed review as a returned turn the model can revise, not a turn that ends on exit_plan_mode', async () => {
     const { ctx, agent } = await setupWithReview()
     registerQuestionAnswerer(ctx, {
       ask: () => Promise.reject(Object.assign(
@@ -1096,9 +1096,23 @@ describe('exit_plan_mode', () => {
     })
     const result = await callExit(ctx, agent)
     expect(result.isError).toBe(false)
-    expect(result.concludesTurn).toBe(true)
+    expect(result.concludesTurn).toBeUndefined()
     expect(result.content).toEqual([{ type: 'text', text: 'The user dismissed the plan review to reply in their own words; plan mode remains active.' }])
     expect(foldPlanMode(agent.session.snapshotEvents())).toBe(true)
+  })
+
+  it('names a dismissed plan that is presented again unchanged instead of ending the same turn twice', async () => {
+    const { ctx, agent } = await setupWithReview()
+    registerQuestionAnswerer(ctx, {
+      ask: () => Promise.reject(Object.assign(
+        new Error('the user cancelled ask_user_question'),
+        { name: 'UserQuestionError', code: 'ASK_CANCELLED' },
+      )),
+    })
+    await callExit(ctx, agent)
+    const again = await callExit(ctx, agent)
+    expect(again.isError).toBe(true)
+    expect(again.content).toEqual([{ type: 'text', text: 'Error: the user dismissed this exact plan already; change it before presenting it again' }])
   })
 
   it('leaves every other review failure its own message', async () => {
