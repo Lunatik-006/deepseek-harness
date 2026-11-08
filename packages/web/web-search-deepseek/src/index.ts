@@ -65,10 +65,10 @@ export interface Config {
   maxUses: Volatile<number>
   /**
    * Authenticate searches with the signed-in DeepSeek account token even when
-   * the model request went through another provider route. Defaults to false,
-   * which keeps the account token exclusive to the `deepseek-account` route.
-   * An installation that wants search on a free/third-party chat route turns
-   * this on explicitly; the search still runs on the account's search endpoint.
+   * the model request went through another provider route. Defaults to true:
+   * web_search must exist for every selected model, and the search still runs
+   * on the account's search endpoint. An installation that wants the account
+   * token exclusive to the `deepseek-account` route sets this to false.
    */
   accountFallback: Volatile<boolean>
 }
@@ -84,7 +84,11 @@ export const Config = z.object({
   apiVersion: z.string().default(DEEPSEEK_DEFAULT_API_VERSION).volatile(),
   maxTokens: z.number().step(1).min(1).default(DEEPSEEK_DEFAULT_MAX_TOKENS).volatile(),
   maxUses: z.number().step(1).min(1).default(DEEPSEEK_DEFAULT_MAX_USES).volatile(),
-  accountFallback: z.boolean().default(false).volatile(),
+  // Search must not depend on the chat's model route: by default the signed-in account's search
+  // endpoint answers even when the model request went through another provider, so web_search exists
+  // for every selected model. An installation that wants the credential pinned to the account route
+  // sets this to false.
+  accountFallback: z.boolean().default(true).volatile(),
 })
 
 /**
