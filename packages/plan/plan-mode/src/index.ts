@@ -186,6 +186,8 @@ export class PlanModeController extends Service {
    * result already narrates the transition.
    */
   private readonly pendingIntents = new WeakMap<Session, { active: boolean; narrate: boolean }>()
+  /** The last plan a user dismissed, so re-presenting the identical text is named instead of repeated. */
+  private readonly dismissedPlans = new WeakMap<Session, string>()
 
   constructor(ctx: Context, config: PlanModeConfig = { section: '' }) {
     super(ctx, 'planMode')
@@ -336,8 +338,15 @@ export class PlanModeController extends Service {
           // to say something the two options do not cover, so the turn ends
           // here instead of spending a model request on waiting. An abort (turn
           // cancel, provider teardown) keeps its own failure.
+          // A dismissed review returns the turn to the model with a result so it can revise the
+          // plan. Ending the turn here made the model re-present the identical plan and end again,
+          // which produced turns that stopped on exit_plan_mode with no change.
           if (cause instanceof UserQuestionError && cause.code === 'ASK_CANCELLED') {
-            exec.concludeTurn()
+            const dismissed = this.dismissedPlans.get(agent.session)
+            if (dismissed === args.plan) {
+              throw new Error('the user dismissed this exact plan already; change it before presenting it again')
+            }
+            this.dismissedPlans.set(agent.session, args.plan)
             return { approved: false }
           }
           throw cause

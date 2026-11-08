@@ -254,7 +254,11 @@ export function apply(ctx: Context, config: Config): void {
     output: GOAL_OUTPUT,
     execute(args, exec) {
       const execution = goalToolExecution(ctx, exec)
-      const ref = goalRef(args.goal_id, args.revision)
+      // A ref is a one-shot argument, not UI state: when the caller holds an older id/revision,
+      // act on the current goal instead of failing with GOAL_STALE_REVISION.
+      const currentGoal = ctx.goals.get(execution.agent)
+      const requested = goalRef(args.goal_id, args.revision)
+      const ref = currentGoal == null ? requested : goalRef(currentGoal.id, currentGoal.revision)
       if (args.action === 'edit') {
         requireDirectHuman(ctx, execution)
         const goal = ctx.goals.edit(execution.agent, ref, {

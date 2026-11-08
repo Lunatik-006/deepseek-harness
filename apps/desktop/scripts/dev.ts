@@ -67,6 +67,9 @@ async function launchElectron(): Promise<void> {
   const userData = resolve(process.env.DSH_DESKTOP_USER_DATA_DIR ?? join(DEVELOPMENT_ROOT, 'electron-user-data'))
   const environment: NodeJS.ProcessEnv = {
     ...process.env,
+    // A user/machine ELECTRON_RUN_AS_NODE=1 turns electron.exe into plain Node, so every
+    // Chromium switch becomes "bad option". The desktop must boot as Electron.
+    ELECTRON_RUN_AS_NODE: undefined,
     DSH_HOME: home,
     DSH_DESKTOP_PRIMARY_RUNTIME_DIR: process.env.DSH_DESKTOP_PRIMARY_RUNTIME_DIR ?? developmentRuntimeDirectory(),
     DSH_DESKTOP_HOST_INSPECT_PORT: String(hostPort),
@@ -79,10 +82,12 @@ async function launchElectron(): Promise<void> {
   if (process.platform === 'darwin') {
     const executable = prepareDevelopmentApp({ electron, appRoot: APP_ROOT, directory: DEVELOPMENT_ROOT, home, userData,
       mainPort, rendererPort, hostPort, openDevtools: environment.DSH_DESKTOP_OPEN_DEVTOOLS! })
-    await run(executable, [], APP_ROOT, environment)
+    await run(executable, ['--no-sandbox', '--disable-gpu'], APP_ROOT, environment)
     return
   }
   await run(electron, [
+    '--no-sandbox',
+    '--disable-gpu',
     `--inspect=127.0.0.1:${String(mainPort)}`,
     `--remote-debugging-port=${String(rendererPort)}`,
     `--user-data-dir=${userData}`,

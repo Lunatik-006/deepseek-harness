@@ -227,10 +227,10 @@ describe('plan mode through the agent loop', () => {
     ])
   })
 
-  it('a dismissed plan review ends the turn without another model request', async () => {
+  it('a dismissed plan review returns the turn to the model instead of ending it on exit_plan_mode', async () => {
     const adapter = new MockAdapter([
       toolCallResponse('call-exit', 'exit_plan_mode', { plan: '# Plan\n\ndo things' }),
-      // Consumed only if the dismissal regresses to another model request.
+      // The dismissal reaches the model as a tool result, so it gets one more request to revise.
       textResponse('Waiting for your message.'),
     ])
     const ctx = await harness(adapter)
@@ -243,7 +243,7 @@ describe('plan mode through the agent loop', () => {
     agent.followup(createUserMessage({ content: [{ type: 'text', text: 'plan it' }], source: { kind: 'user' } }))
     await idle
 
-    expect(adapter.requests).toHaveLength(1)
+    expect(adapter.requests).toHaveLength(2)
     const log = agent.session.snapshotEvents()
     const result = findEvent(log, 'tool/result')
     expect(result.data.message.isError).toBe(false)

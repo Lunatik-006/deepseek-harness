@@ -167,9 +167,9 @@ function npmPackageOf(id: string): string | undefined {
 }
 
 export default defineConfig({
+  base: './',
   // Relative asset URLs: preview.html mounts the same output under any base
   // directory, and the served index resolves identically from the site root.
-  base: './',
   plugins: [
     rejectStandaloneServe(), clientDocumentTitle(), brandFontLicense(), katexWoff2Fonts(), react(), emitPreviewPage(),
     productWebBundleIsolation(src('../..'), src('.')),
@@ -177,7 +177,8 @@ export default defineConfig({
   build: {
     // The worker bootstrap holds its page at top-level await; Vite's default
     // `modules` target (es2020-era) rejects that syntax.
-    target: 'es2022',
+    target: 'esnext',
+    minify: false,
     sourcemap: true,
     rollupOptions: {
       input: {

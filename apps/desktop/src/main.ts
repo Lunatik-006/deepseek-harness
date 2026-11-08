@@ -378,7 +378,7 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
       preload,
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
+      sandbox: false,
       webSecurity: true,
       webviewTag: primary,
       devTools: true,
