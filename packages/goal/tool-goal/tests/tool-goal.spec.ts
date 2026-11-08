@@ -540,18 +540,23 @@ describe('goal tool state transitions', () => {
       goal_id: created.id, revision: created.revision + 1, action: 'complete',
       objective: 'ignored', max_goal_rounds: 12, blocked_reason: 'ignored',
     }, root.agent)
-    expect(stale.error?.info?.code).toBe('GOAL_STALE_REVISION')
+    // A ref is a one-shot argument: the tool acts on the current goal instead of failing
+    // with GOAL_STALE_REVISION (tool-goal/src/index.ts); the service keeps rejecting a
+    // stale ref for direct callers.
+    expect(stale.error).toBeUndefined()
+    expect(ctx.goals.get(root.agent)).toMatchObject({ id: created.id, phase: 'complete' })
+    const fresh = ctx.goals.create(root.agent, { objective: 'valid again' })
     const wrongType = await execute(ctx, 'update_goal', {
-      goal_id: created.id, revision: created.revision, action: 'complete', max_goal_rounds: '12',
+      goal_id: fresh.id, revision: fresh.revision, action: 'complete', max_goal_rounds: '12',
     }, root.agent)
     expect(wrongType.isError).toBe(true)
-    expect(ctx.goals.get(root.agent)).toMatchObject({ objective: 'valid', revision: created.revision, phase: 'active' })
+    expect(ctx.goals.get(root.agent)).toMatchObject({ objective: 'valid again', revision: fresh.revision, phase: 'active' })
     const blockedWithoutReason = await execute(ctx, 'update_goal', {
-      goal_id: created.id, revision: created.revision, action: 'blocked',
+      goal_id: fresh.id, revision: fresh.revision, action: 'blocked',
     }, root.agent)
     expect(blockedWithoutReason.error?.info?.code).toBe('GOAL_TOOL_INVALID_UPDATE')
     const blockedWithEmptyReason = await execute(ctx, 'update_goal', {
-      goal_id: created.id, revision: created.revision, action: 'blocked', blocked_reason: ' ',
+      goal_id: fresh.id, revision: fresh.revision, action: 'blocked', blocked_reason: ' ',
     }, root.agent)
     expect(blockedWithEmptyReason.error?.info?.code).toBe('GOAL_TOOL_INVALID_UPDATE')
     const malformedRef = await execute(ctx, 'update_goal', {
